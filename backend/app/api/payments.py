@@ -398,6 +398,16 @@ async def capture_paypal_order(
             detail="PathGuard blocked this payment.",
         )
 
+    if (
+        payment.risk
+        and payment.risk.decision == "REVIEW"
+        and payment.status != "REVIEW_APPROVED"
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="This payment requires human approval before PayPal processing.",
+        )
+
     paypal_order = payment.paypal_order
 
     # Idempotency protection.
@@ -517,6 +527,19 @@ async def paypal_return(
             "/",
             paypal="error",
             message="Payment not found",
+        )
+
+    # A REVIEW decision must be explicitly approved before checkout capture.
+    if (
+        payment.risk
+        and payment.risk.decision == "REVIEW"
+        and payment.status != "REVIEW_APPROVED"
+    ):
+        return _frontend_redirect(
+            "/",
+            paypal="blocked",
+            payment_id=payment.id,
+            message="This payment requires human approval before capture.",
         )
 
     # Never capture a payment that PathGuard blocked.
