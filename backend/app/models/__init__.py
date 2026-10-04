@@ -1,3 +1,3 @@
-from app.models.payment import PaymentRequest, RiskAssessment, PayPalOrder
+from app.models.payment import PaymentRequest, RiskAssessment, PayPalOrder, ReviewEvent
 
-__all__ = ["PaymentRequest", "RiskAssessment", "PayPalOrder"]
+__all__ = ["PaymentRequest", "RiskAssessment", "PayPalOrder", "ReviewEvent"]
