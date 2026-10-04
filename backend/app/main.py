@@ -1,15 +1,15 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.db import Base, engine
 from app.api.payments import router as payments_router
 from app.api.reviews import router as reviews_router
+from app.db import initialize_database
 
-Base.metadata.create_all(bind=engine)
+initialize_database()
 
 app = FastAPI(
     title="PathGuard Pay",
-    version="0.1.0",
+    version="0.2.0",
     description="AI safety layer for PayPal payments.",
 )
 
