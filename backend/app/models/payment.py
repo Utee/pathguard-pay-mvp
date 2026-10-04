@@ -21,13 +21,11 @@ class PaymentRequest(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     risk: Mapped["RiskAssessment | None"] = relationship(
-        back_populates="payment_request",
-        uselist=False,
+        back_populates="payment_request", uselist=False,
         cascade="all, delete-orphan",
     )
     paypal_order: Mapped["PayPalOrder | None"] = relationship(
-        back_populates="payment_request",
-        uselist=False,
+        back_populates="payment_request", uselist=False,
         cascade="all, delete-orphan",
     )
 
@@ -66,3 +64,16 @@ class PayPalOrder(Base):
     captured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     payment_request: Mapped[PaymentRequest] = relationship(back_populates="paypal_order")
+
+
+class ReviewEvent(Base):
+    __tablename__ = "review_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    payment_request_id: Mapped[int] = mapped_column(
+        ForeignKey("payment_requests.id"), index=True
+    )
+    action: Mapped[str] = mapped_column(String(30))
+    note: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    reviewer: Mapped[str] = mapped_column(String(120), default="local-reviewer")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
