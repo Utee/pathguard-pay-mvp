@@ -158,7 +158,15 @@ Return recent locally stored payment requests.
 
 ### GET `/api/payments/{payment_id}`
 
-Return a payment request, risk assessment, and PayPal details.
+Return a payment request, risk assessment, recipient history, review events, audit events, and PayPal details.
+
+### GET `/api/payments/recipients/{recipient_name}/history`
+
+Return persistent payment history and aggregate amount statistics for a recipient.
+
+### GET `/api/payments/{payment_id}/audit`
+
+Return the audit timeline for a payment attempt.
 
 ### POST `/api/payments/{payment_id}/paypal/create`
 
@@ -206,10 +214,10 @@ Handle a cancelled PayPal approval and redirect back to the frontend.
 - [ ] Expand automated backend/API tests
 
 ### Phase 2 — Payment safety workflow
-- [ ] Persistent recipient history
+- [x] Persistent recipient history
 - [x] Human review queue for `REVIEW` payments
-- [ ] Full audit timeline for every payment attempt (review decision events are now stored)
-- [ ] Stronger amount/frequency anomaly detection
+- [x] Full audit timeline for every payment attempt
+- [x] Stronger amount anomaly detection for recipient history and large first payments
 - [ ] Better AI intent extraction and validation
 - [ ] Explicit instruction-vs-intent mismatch detection
 
