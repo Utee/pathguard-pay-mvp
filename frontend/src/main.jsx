@@ -19,6 +19,8 @@ function App() {
   const [instruction, setInstruction] = useState('');
   const [payment, setPayment] = useState(null);
   const [history, setHistory] = useState([]);
+  const [reviewQueue, setReviewQueue] = useState([]);
+  const [reviewLoading, setReviewLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [payLoading, setPayLoading] = useState(false);
   const [error, setError] = useState('');
@@ -28,6 +30,8 @@ function App() {
     try {
       const r = await fetch(`${API}/api/payments`);
       if (r.ok) setHistory(await r.json());
+      const reviews = await fetch(`${API}/api/reviews`);
+      if (reviews.ok) setReviewQueue(await reviews.json());
     } catch {
       // Keep the dashboard usable if history is temporarily unavailable.
     }
@@ -85,6 +89,35 @@ function App() {
     // does not repeat the return-state handling.
     window.history.replaceState({}, '', window.location.pathname);
   }, []);
+
+  async function decideReview(item, action) {
+    setReviewLoading(true);
+    setError('');
+    try {
+      const r = await fetch(`${API}/api/reviews/${item.id}/${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          reviewer: 'local-reviewer',
+          note: action === 'approve'
+            ? 'Approved after human review.'
+            : 'Rejected after human review.',
+        }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || 'Could not update review');
+      setReviewQueue((items) => items.filter((x) => x.id !== item.id));
+      setHistory((items) => items.map((x) => x.id === item.id ? { ...x, status: d.status } : x));
+      setPayment((current) => current?.payment_id === item.id
+        ? { ...current, status: d.status }
+        : current);
+    } catch (e) {
+      setError(e.message || 'Could not update review');
+    } finally {
+      setReviewLoading(false);
+      load();
+    }
+  }
 
   async function analyze() {
     if (!instruction.trim()) return;
@@ -310,6 +343,26 @@ function App() {
           </div>
 
           <div className="card info">
+            <h3><Clock3 /> Human review queue <span className="queue-count">{reviewQueue.length}</span></h3>
+            {reviewQueue.length ? reviewQueue.map((item) => (
+              <div className="review-item" key={item.id}>
+                <div className="review-meta">
+                  <b>{item.recipient}</b>
+                  <strong>{item.currency} {Number(item.amount).toLocaleString()}</strong>
+                </div>
+                <small>{item.purpose || 'Payment'} · Risk {item.risk?.score ?? '—'}/100</small>
+                {item.risk?.reasons?.slice(0, 2).map((reason, i) => (
+                  <small className="review-reason" key={i}>• {reason}</small>
+                ))}
+                <div className="review-actions">
+                  <button disabled={reviewLoading} onClick={() => decideReview(item, 'approve')}>Approve</button>
+                  <button disabled={reviewLoading} onClick={() => decideReview(item, 'reject')}>Reject</button>
+                </div>
+              </div>
+            )) : <p className="muted">No payments are waiting for review.</p>}
+          </div>
+
+          <div className="card info">
             <h3>
               <History /> Recent activity
             </h3>
@@ -426,7 +479,11 @@ function Risk({ payment, decision, loading, onPay }) {
         <div className="blocked">
           <ShieldX /> No PayPal order was created.
         </div>
-      ) : (
+      ) : decision === 'REVIEW' && payment?.status !== 'REVIEW_APPROVED' ? (
+        <div className="blocked review-held">
+          <Clock3 /> This payment is on hold until a reviewer approves it.
+        </div>
+      ) : decision === 'REVIEW' && payment?.status === 'REVIEW_APPROVED' ? (
         <button className="paypal" disabled={loading} onClick={onPay}>
           {loading ? (
             <>
@@ -438,6 +495,10 @@ function Risk({ payment, decision, loading, onPay }) {
               Continue with PayPal <ArrowRight />
             </>
           )}
+        </button>
+      ) : (
+        <button className="paypal" disabled={loading} onClick={onPay}>
+          {loading ? <><Loader2 className="spin" /> Creating PayPal order…</> : <>Continue with PayPal <ArrowRight /></>}
         </button>
       )}
     </div>
