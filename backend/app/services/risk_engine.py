@@ -5,32 +5,11 @@ from app.models import PaymentRequest
 from app.schemas.payment import PaymentIntent, RiskResult
 
 
-def assess_payment(
-    db: Session,
-    intent: PaymentIntent,
-    raw_instruction: str,
-) -> RiskResult:
-    """
-    Deterministic PathGuard payment-risk assessment.
-
-    Rules:
-    - New recipient: +20
-    - Large first payment (>= $5,000): +40
-    - Unusually large payment compared with recipient history: +40
-    - Very large payment (>= $10,000): +35
-    - Risk score >= 70: BLOCK
-    - Risk score >= 30: REVIEW
-    - Otherwise: ALLOW
-    """
-
+def assess_payment(db: Session, intent: PaymentIntent, raw_instruction: str) -> RiskResult:
     previous = (
         db.execute(
             select(PaymentRequest)
-            .where(
-                PaymentRequest.recipient_name.ilike(
-                    intent.recipient_name
-                )
-            )
+            .where(PaymentRequest.recipient_name.ilike(intent.recipient_name))
             .order_by(PaymentRequest.created_at.desc())
         )
         .scalars()
@@ -38,86 +17,51 @@ def assess_payment(
     )
 
     score = 0
-    reasons: list[str] = []
-
+    reasons = []
     amount_anomaly = False
     new_recipient = len(previous) == 0
     instruction_mismatch = False
     frequency_anomaly = False
 
-    # ---------------------------------------------------------
-    # New recipient
-    # ---------------------------------------------------------
-
     if new_recipient:
         score += 20
         reasons.append("This is a new recipient.")
 
-    # ---------------------------------------------------------
-    # Amount anomaly
-    # ---------------------------------------------------------
-
     if previous:
-        amounts = [
-            float(payment.amount)
-            for payment in previous
-            if payment.amount is not None
-        ]
-
+        amounts = [float(payment.amount) for payment in previous if payment.amount is not None]
         if amounts:
             average_amount = sum(amounts) / len(amounts)
+            anomaly_threshold = max(average_amount * 5, average_amount + 1000)
 
-            if intent.amount > max(
-                average_amount * 5,
-                average_amount + 1000,
-            ):
+            if intent.amount > anomaly_threshold:
                 amount_anomaly = True
-                score += 40
-
-                reasons.append(
-                    "The requested amount is unusually high "
-                    f"for this recipient "
-                    f"(recent average: ${average_amount:.2f})."
-                )
+                severe_threshold = max(average_amount * 10, average_amount + 2500)
+                if intent.amount > severe_threshold:
+                    score += 70
+                    reasons.append(
+                        "The requested amount is severely above this recipient's "
+                        f"normal range (recent average: ${average_amount:.2f})."
+                    )
+                else:
+                    score += 40
+                    reasons.append(
+                        "The requested amount is unusually high "
+                        f"for this recipient (recent average: ${average_amount:.2f})."
+                    )
             else:
-                reasons.append(
-                    "The amount is within the recipient's "
-                    "recent payment range."
-                )
-
+                reasons.append("The amount is within the recipient's recent payment range.")
     else:
-        # First payment to this recipient.
         if intent.amount >= 5000:
             amount_anomaly = True
             score += 40
-
-            reasons.append(
-                "The amount is high for a first payment "
-                "to this recipient."
-            )
-
-    # ---------------------------------------------------------
-    # Very large payment
-    # ---------------------------------------------------------
+            reasons.append("The amount is high for a first payment to this recipient.")
 
     if intent.amount >= 10000:
         amount_anomaly = True
         score += 35
-
-        reasons.append(
-            "The requested payment amount is very large."
-        )
-
-    # ---------------------------------------------------------
-    # Keep risk score within 0-100
-    # ---------------------------------------------------------
+        reasons.append("The requested payment amount is very large.")
 
     score = min(score, 100)
-
-    # ---------------------------------------------------------
-    # Decision
-    # ---------------------------------------------------------
-
     if score >= 70:
         decision = "BLOCK"
     elif score >= 30:
@@ -126,13 +70,8 @@ def assess_payment(
         decision = "ALLOW"
 
     if not reasons:
-        reasons.append(
-            "No significant risk signals were detected."
-        )
+        reasons.append("No significant risk signals were detected.")
 
-    # IMPORTANT:
-    # Return the Pydantic RiskResult from app.schemas.payment.
-    # Do not define another RiskResult class in this file.
     return RiskResult(
         risk_score=score,
         decision=decision,
