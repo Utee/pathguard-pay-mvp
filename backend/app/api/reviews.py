@@ -36,7 +36,7 @@ def review_queue(db: Session = Depends(get_db)):
     """List payments awaiting a human decision."""
     items = (
         db.query(PaymentRequest)
-        .filter(PaymentRequest.status.in_(("REVIEW", "REVIEW_PENDING")))
+        .filter(PaymentRequest.status == "REVIEW_PENDING")
         .order_by(PaymentRequest.created_at.asc())
         .limit(100)
         .all()
@@ -45,11 +45,7 @@ def review_queue(db: Session = Depends(get_db)):
 
 
 @router.post("/{payment_id}/approve")
-def approve_review(
-    payment_id: int,
-    payload: ReviewDecision,
-    db: Session = Depends(get_db),
-):
+def approve_review(payment_id: int, payload: ReviewDecision, db: Session = Depends(get_db)):
     payment = db.get(PaymentRequest, payment_id)
     if not payment:
         raise HTTPException(status_code=404, detail="Payment request not found")
@@ -63,23 +59,21 @@ def approve_review(
         raise HTTPException(status_code=409, detail="Payment has already entered PayPal processing")
 
     payment.status = "REVIEW_APPROVED"
-    db.add(ReviewEvent(
-        payment_request_id=payment.id,
-        action="APPROVED",
-        note=payload.note,
-        reviewer=payload.reviewer.strip(),
-    ))
+    db.add(
+        ReviewEvent(
+            payment_request_id=payment.id,
+            action="APPROVED",
+            note=payload.note,
+            reviewer=payload.reviewer.strip(),
+        )
+    )
     db.commit()
     db.refresh(payment)
     return _payment_payload(payment)
 
 
 @router.post("/{payment_id}/reject")
-def reject_review(
-    payment_id: int,
-    payload: ReviewDecision,
-    db: Session = Depends(get_db),
-):
+def reject_review(payment_id: int, payload: ReviewDecision, db: Session = Depends(get_db)):
     payment = db.get(PaymentRequest, payment_id)
     if not payment:
         raise HTTPException(status_code=404, detail="Payment request not found")
@@ -93,12 +87,14 @@ def reject_review(
         raise HTTPException(status_code=409, detail="Payment has already entered PayPal processing")
 
     payment.status = "REVIEW_REJECTED"
-    db.add(ReviewEvent(
-        payment_request_id=payment.id,
-        action="REJECTED",
-        note=payload.note,
-        reviewer=payload.reviewer.strip(),
-    ))
+    db.add(
+        ReviewEvent(
+            payment_request_id=payment.id,
+            action="REJECTED",
+            note=payload.note,
+            reviewer=payload.reviewer.strip(),
+        )
+    )
     db.commit()
     db.refresh(payment)
     return _payment_payload(payment)
@@ -114,10 +110,13 @@ def review_events(payment_id: int, db: Session = Depends(get_db)):
         .order_by(ReviewEvent.created_at.asc())
         .all()
     )
-    return [{
-        "id": event.id,
-        "action": event.action,
-        "note": event.note,
-        "reviewer": event.reviewer,
-        "created_at": event.created_at,
-    } for event in events]
+    return [
+        {
+            "id": event.id,
+            "action": event.action,
+            "note": event.note,
+            "reviewer": event.reviewer,
+            "created_at": event.created_at,
+        }
+        for event in events
+    ]
