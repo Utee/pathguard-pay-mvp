@@ -59,8 +59,6 @@ def approve_review(
         raise HTTPException(status_code=409, detail="This payment was already rejected")
     if payment.status == "REVIEW_APPROVED":
         raise HTTPException(status_code=409, detail="This payment was already approved")
-    if payment.status == "REVIEW_REJECTED":
-        raise HTTPException(status_code=409, detail="This payment was already rejected")
     if payment.status == "COMPLETED" or payment.paypal_order:
         raise HTTPException(status_code=409, detail="Payment has already entered PayPal processing")
 
@@ -89,6 +87,8 @@ def reject_review(
         raise HTTPException(status_code=409, detail="Only REVIEW payments can be rejected")
     if payment.status == "REVIEW_APPROVED":
         raise HTTPException(status_code=409, detail="This payment was already approved")
+    if payment.status == "REVIEW_REJECTED":
+        raise HTTPException(status_code=409, detail="This payment was already rejected")
     if payment.status == "COMPLETED" or payment.paypal_order:
         raise HTTPException(status_code=409, detail="Payment has already entered PayPal processing")
 
