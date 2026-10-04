@@ -137,7 +137,10 @@ function App() {
       const d = await r.json();
       if (!r.ok) throw new Error(d.detail || 'Analysis failed');
 
-      setPayment(d);
+      setPayment({
+        ...d,
+        status: d.risk?.decision === 'REVIEW' ? 'REVIEW_PENDING' : d.risk?.decision,
+      });
       load();
     } catch (e) {
       setError(e.message || 'Analysis failed');
