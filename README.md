@@ -10,10 +10,10 @@ AI payment safety layer for PayPal Sandbox.
 4. Runs the intent through deterministic PathGuard risk rules.
 5. Returns `ALLOW`, `REVIEW`, or `BLOCK`.
 6. Stores payment requests and risk assessments in SQLite.
-7. Creates PayPal Sandbox orders only when the risk engine allows the payment.
+7. Creates PayPal Sandbox orders only when the risk engine allows the payment or a human reviewer approves a `REVIEW` decision.
 8. Handles the PayPal buyer approval flow and server-side capture.
 9. Persists recent payment activity for the dashboard.
-10. Provides a React/Vite dashboard for analysis and PayPal checkout.
+10. Provides a React/Vite dashboard for analysis, human review, and PayPal checkout.
 
 > No real money is moved by this project. PayPal integration is intended for the Sandbox.
 
@@ -162,7 +162,23 @@ Return a payment request, risk assessment, and PayPal details.
 
 ### POST `/api/payments/{payment_id}/paypal/create`
 
-Create a PayPal Sandbox order when the risk decision permits the payment.
+Create a PayPal Sandbox order for `ALLOW` payments or `REVIEW` payments explicitly approved by a human reviewer. `BLOCK` and unapproved `REVIEW` payments are rejected.
+
+### GET `/api/reviews`
+
+List payment requests waiting for human review.
+
+### POST `/api/reviews/{payment_id}/approve`
+
+Approve a payment with a `REVIEW` decision. The payment then becomes eligible for PayPal checkout. Accepts an optional `note` and `reviewer`.
+
+### POST `/api/reviews/{payment_id}/reject`
+
+Reject a payment with a `REVIEW` decision. A rejected payment cannot proceed to PayPal. Accepts an optional `note` and `reviewer`.
+
+### GET `/api/reviews/{payment_id}/events`
+
+Return the stored human-review events for a payment, including submission, reviewer, action, note, and timestamp.
 
 ### POST `/api/payments/{payment_id}/paypal/capture`
 
@@ -191,8 +207,8 @@ Handle a cancelled PayPal approval and redirect back to the frontend.
 
 ### Phase 2 — Payment safety workflow
 - [ ] Persistent recipient history
-- [ ] Human review queue for `REVIEW` payments
-- [ ] Audit timeline for every payment attempt
+- [x] Human review queue for `REVIEW` payments
+- [ ] Full audit timeline for every payment attempt (review decision events are now stored)
 - [ ] Stronger amount/frequency anomaly detection
 - [ ] Better AI intent extraction and validation
 - [ ] Explicit instruction-vs-intent mismatch detection
@@ -219,4 +235,5 @@ Handle a cancelled PayPal approval and redirect back to the frontend.
 - Never commit `.env` files or payment credentials.
 - PayPal Client ID and Secret must stay server-side.
 - Do not treat an AI-generated payment intent as authoritative without deterministic validation.
-- Payments should only reach a payment rail after the PathGuard risk decision permits them.
+- Payments should only reach a payment rail after the PathGuard risk decision permits them; `REVIEW` payments also require an explicit human approval.
+- The current review endpoints are unauthenticated and intended for local MVP/testing only. Add authentication and reviewer authorization before exposing them publicly.
