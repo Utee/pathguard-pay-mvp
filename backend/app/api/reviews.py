@@ -1,5 +1,3 @@
-from datetime import timezone
-
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -38,7 +36,7 @@ def review_queue(db: Session = Depends(get_db)):
     """List payments awaiting a human decision."""
     items = (
         db.query(PaymentRequest)
-        .filter(PaymentRequest.status.in_(( "REVIEW", "REVIEW_PENDING" )))
+        .filter(PaymentRequest.status.in_(("REVIEW", "REVIEW_PENDING")))
         .order_by(PaymentRequest.created_at.asc())
         .limit(100)
         .all()
@@ -57,6 +55,10 @@ def approve_review(
         raise HTTPException(status_code=404, detail="Payment request not found")
     if not payment.risk or payment.risk.decision != "REVIEW":
         raise HTTPException(status_code=409, detail="Only REVIEW payments can be approved")
+    if payment.status == "REVIEW_REJECTED":
+        raise HTTPException(status_code=409, detail="This payment was already rejected")
+    if payment.status == "REVIEW_APPROVED":
+        raise HTTPException(status_code=409, detail="This payment was already approved")
     if payment.status == "REVIEW_REJECTED":
         raise HTTPException(status_code=409, detail="This payment was already rejected")
     if payment.status == "COMPLETED" or payment.paypal_order:
