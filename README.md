@@ -2,25 +2,45 @@
 
 AI payment safety layer for PayPal Sandbox.
 
-## What this first milestone does
+## What the MVP does
 
 1. Accepts a natural-language payment instruction.
 2. Extracts a structured payment intent using OpenAI when configured.
 3. Falls back to a small local parser when `OPENAI_API_KEY` is absent.
 4. Runs the intent through deterministic PathGuard risk rules.
 5. Returns `ALLOW`, `REVIEW`, or `BLOCK`.
-6. Includes PayPal Sandbox service code for OAuth, Create Order, Get Order, and Capture.
-7. Starts with SQLite so the project runs locally with no database server.
+6. Stores payment requests and risk assessments in SQLite.
+7. Creates PayPal Sandbox orders only when the risk engine allows the payment.
+8. Handles the PayPal buyer approval flow and server-side capture.
+9. Persists recent payment activity for the dashboard.
+10. Provides a React/Vite dashboard for analysis and PayPal checkout.
 
 > No real money is moved by this project. PayPal integration is intended for the Sandbox.
+
+## Architecture
+
+```text
+Natural-language instruction
+          ↓
+    Payment Intent
+          ↓
+ PathGuard Risk Engine
+          ↓
+    ALLOW / REVIEW / BLOCK
+          ↓
+       PayPal
+```
+
+The long-term direction is to make PathGuard Pay a payment safety layer that can sit in front of multiple payment rails, not just PayPal.
 
 ## Requirements
 
 - Python 3.11+
+- Node.js 18+
 - Optional: PayPal Developer Sandbox app credentials
 - Optional: OpenAI API key
 
-## 1. Create the environment
+## Backend setup
 
 ```bash
 cd backend
@@ -35,12 +55,12 @@ Windows PowerShell:
 ```powershell
 cd backend
 python -m venv .venv
-.venv\Scripts\Activate.ps1
+.venv\\Scripts\\Activate.ps1
 pip install -r requirements.txt
 copy .env.example .env
 ```
 
-## 2. Run the API
+Run the API:
 
 ```bash
 uvicorn app.main:app --reload
@@ -51,7 +71,38 @@ Open:
 - API docs: http://127.0.0.1:8000/docs
 - Health: http://127.0.0.1:8000/health
 
-## 3. Test the risk engine without any credentials
+## Frontend setup
+
+In a second terminal:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+The frontend defaults to:
+
+```text
+http://127.0.0.1:8000
+```
+
+To point it at another backend, create `frontend/.env`:
+
+```env
+VITE_API_URL=http://127.0.0.1:8000
+```
+
+## Test the risk engine
+
+No external credentials are required for the deterministic risk tests:
+
+```bash
+cd backend
+pytest
+```
+
+You can also test the API directly:
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/payments/analyze \
@@ -67,54 +118,105 @@ curl -X POST http://127.0.0.1:8000/api/payments/analyze \
   -d '{"instruction":"Pay John $10000 for the website"}'
 ```
 
-## 4. PayPal Sandbox
+## PayPal Sandbox
 
-Create a Sandbox REST app in the PayPal Developer Dashboard and put the Client ID and Secret in `.env`.
+Create a Sandbox REST app in the PayPal Developer Dashboard and put the Client ID and Secret in `backend/.env`.
 
 The backend uses PayPal's Sandbox REST base URL:
 
 `https://api-m.sandbox.paypal.com`
 
-The normal Checkout flow is:
+The checkout flow is:
 
-Create Order -> buyer approval -> Capture Order.
+```text
+Analyze
+  ↓
+Risk decision
+  ↓
+Create PayPal order
+  ↓
+Buyer approval
+  ↓
+Server verifies order
+  ↓
+Server captures order
+  ↓
+Payment completed
+```
 
-The project intentionally keeps PayPal credentials on the server.
+PayPal credentials remain on the backend.
 
 ## Current API
 
 ### POST `/api/payments/analyze`
 
-Request:
-
-```json
-{
-  "instruction": "Pay John $200 for the website"
-}
-```
+Analyze a natural-language payment instruction.
 
 ### GET `/api/payments`
 
-Returns locally stored payment requests.
+Return recent locally stored payment requests.
 
 ### GET `/api/payments/{payment_id}`
 
-Returns a payment request and risk assessment.
+Return a payment request, risk assessment, and PayPal details.
 
 ### POST `/api/payments/{payment_id}/paypal/create`
 
-Creates a PayPal Sandbox order only when the payment is allowed to proceed.
+Create a PayPal Sandbox order when the risk decision permits the payment.
 
 ### POST `/api/payments/{payment_id}/paypal/capture`
 
-Captures an approved PayPal order.
+Capture an approved PayPal order. The operation is idempotent.
 
-## Next milestone
+### GET `/api/payments/paypal/return`
 
-- React dashboard
-- PayPal JavaScript SDK checkout button
-- Persistent recipient history
-- Human review flow
-- PayPal webhook verification
-- Better AI intent extraction
-- Audit timeline
+Handle the PayPal buyer return, verify the order, capture an approved order, and redirect the frontend with the result.
+
+### GET `/api/payments/paypal/cancel`
+
+Handle a cancelled PayPal approval and redirect back to the frontend.
+
+## Roadmap
+
+### Phase 1 — MVP hardening
+- [x] Natural-language payment intent extraction
+- [x] Deterministic PathGuard risk engine
+- [x] ALLOW / REVIEW / BLOCK decisions
+- [x] SQLite persistence
+- [x] React dashboard
+- [x] PayPal Sandbox order creation
+- [x] Server-side PayPal capture
+- [ ] Remove previously committed `frontend/node_modules` from Git history/tree
+- [ ] Expand automated backend/API tests
+
+### Phase 2 — Payment safety workflow
+- [ ] Persistent recipient history
+- [ ] Human review queue for `REVIEW` payments
+- [ ] Audit timeline for every payment attempt
+- [ ] Stronger amount/frequency anomaly detection
+- [ ] Better AI intent extraction and validation
+- [ ] Explicit instruction-vs-intent mismatch detection
+
+### Phase 3 — Production readiness
+- [ ] PayPal webhook verification
+- [ ] Authentication and user accounts
+- [ ] PostgreSQL
+- [ ] Production CORS configuration
+- [ ] Rate limiting
+- [ ] Structured logging and monitoring
+- [ ] Staging deployment
+- [ ] Production deployment
+
+### Phase 4 — PathGuard expansion
+- [ ] Reusable PathGuard risk API
+- [ ] MCP/agent integration
+- [ ] Additional payment rails such as Stripe and crypto
+- [ ] Merchant/recipient trust profiles
+- [ ] Organization-level controls and review policies
+
+## Security notes
+
+- Never commit `.env` files or payment credentials.
+- PayPal Client ID and Secret must stay server-side.
+- Do not treat an AI-generated payment intent as authoritative without deterministic validation.
+- Payments should only reach a payment rail after the PathGuard risk decision permits them.
