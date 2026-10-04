@@ -118,14 +118,12 @@ class PaymentRequest(Base):
     )
 
     risk: Mapped["RiskAssessment | None"] = relationship(
-        back_populates="payment_request",
-        uselist=False,
+        back_populates="payment_request", uselist=False,
         cascade="all, delete-orphan",
     )
 
     paypal_order: Mapped["PayPalOrder | None"] = relationship(
-        back_populates="payment_request",
-        uselist=False,
+        back_populates="payment_request", uselist=False,
         cascade="all, delete-orphan",
     )
 
@@ -293,6 +291,7 @@ class PayPalOrder(Base):
         primary_key=True,
     )
 
+<<<<<<< HEAD
     payment_request_id: Mapped[int] = mapped_column(
         ForeignKey("payment_requests.id"),
         unique=True,
@@ -330,3 +329,19 @@ class PayPalOrder(Base):
     payment_request: Mapped[PaymentRequest] = relationship(
         back_populates="paypal_order",
     )
+=======
+    payment_request: Mapped[PaymentRequest] = relationship(back_populates="paypal_order")
+
+
+class ReviewEvent(Base):
+    __tablename__ = "review_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    payment_request_id: Mapped[int] = mapped_column(
+        ForeignKey("payment_requests.id"), index=True
+    )
+    action: Mapped[str] = mapped_column(String(30))
+    note: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    reviewer: Mapped[str] = mapped_column(String(120), default="local-reviewer")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+>>>>>>> 7bec9385fe0be4f6f92cb51ff7bc38e029fcb40e

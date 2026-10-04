@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.db import get_db
-from app.models import PaymentRequest, RiskAssessment, PayPalOrder
+from app.models import PaymentRequest, RiskAssessment, PayPalOrder, ReviewEvent
 from app.schemas.payment import (
     AnalyzePaymentRequest,
     AnalyzePaymentResponse,
@@ -112,7 +112,7 @@ def analyze_payment(
         amount=intent.amount,
         currency=intent.currency.upper(),
         purpose=intent.purpose,
-        status=risk.decision,
+        status=("REVIEW_PENDING" if risk.decision == "REVIEW" else risk.decision),
     )
 
     db.add(payment)
@@ -130,6 +130,12 @@ def analyze_payment(
     )
 
     db.add(assessment)
+    if risk.decision == "REVIEW":
+        db.add(ReviewEvent(
+            payment_request_id=payment.id,
+            action="SUBMITTED",
+            note="Queued for human review after automated risk assessment.",
+        ))
     db.commit()
     db.refresh(payment)
 
@@ -269,6 +275,15 @@ async def create_paypal_order(
             ),
         )
 
+    if (
+        payment.risk.decision == "REVIEW"
+        and payment.status != "REVIEW_APPROVED"
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="This payment requires human approval before PayPal checkout.",
+        )
+
     # Don't create duplicate PayPal orders.
     if payment.paypal_order:
         existing_order = payment.paypal_order
@@ -381,6 +396,16 @@ async def capture_paypal_order(
         raise HTTPException(
             status_code=403,
             detail="PathGuard blocked this payment.",
+        )
+
+    if (
+        payment.risk
+        and payment.risk.decision == "REVIEW"
+        and payment.status != "REVIEW_APPROVED"
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="This payment requires human approval before PayPal processing.",
         )
 
     paypal_order = payment.paypal_order
@@ -502,6 +527,19 @@ async def paypal_return(
             "/",
             paypal="error",
             message="Payment not found",
+        )
+
+    # A REVIEW decision must be explicitly approved before checkout capture.
+    if (
+        payment.risk
+        and payment.risk.decision == "REVIEW"
+        and payment.status != "REVIEW_APPROVED"
+    ):
+        return _frontend_redirect(
+            "/",
+            paypal="blocked",
+            payment_id=payment.id,
+            message="This payment requires human approval before capture.",
         )
 
     # Never capture a payment that PathGuard blocked.

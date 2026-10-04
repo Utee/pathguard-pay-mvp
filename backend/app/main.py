@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.db import Base, engine
 from app.api.payments import router as payments_router
+from app.api.reviews import router as reviews_router
 
 Base.metadata.create_all(bind=engine)
 
@@ -21,6 +22,7 @@ app.add_middleware(
 )
 
 app.include_router(payments_router)
+app.include_router(reviews_router)
 
 
 @app.get("/health")
