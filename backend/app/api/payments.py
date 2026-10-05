@@ -44,6 +44,17 @@ def _audit(
     )
 
 
+def _has_human_approval(payment: PaymentRequest) -> bool:
+    """Return whether a REVIEW payment has an explicit human approval event."""
+    if not payment.risk or payment.risk.decision != "REVIEW":
+        return True
+
+    return any(
+        event.action == "APPROVED"
+        for event in payment.review_events
+    )
+
+
 def _paypal_approval_url(data: dict) -> str | None:
     for link in data.get("links", []):
         if link.get("rel") in {"approve", "payer-action"}:
@@ -205,7 +216,7 @@ async def paypal_return(token: str | None = None, db: Session = Depends(get_db))
     if not payment:
         return _frontend_redirect("/", paypal="error", message="Payment not found")
 
-    if payment.risk and payment.risk.decision == "REVIEW" and payment.status != "REVIEW_APPROVED":
+    if not _has_human_approval(payment):
         return _frontend_redirect(
             "/", paypal="blocked", payment_id=payment.id,
             message="This payment requires human approval before capture.",
