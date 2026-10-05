@@ -305,7 +305,7 @@ async def sync_paypal_order(token: str, db: Session = Depends(get_db)):
     if payment.risk and payment.risk.decision == "BLOCK":
         raise HTTPException(status_code=403, detail="PathGuard blocked this payment.")
 
-    if payment.risk and payment.risk.decision == "REVIEW" and payment.status != "REVIEW_APPROVED":
+    if not _has_human_approval(payment):
         raise HTTPException(
             status_code=403,
             detail="This payment requires human approval before PayPal processing.",
@@ -489,7 +489,7 @@ async def create_paypal_order(payment_id: int, db: Session = Depends(get_db)):
     if payment.risk.decision == "BLOCK":
         raise HTTPException(status_code=403, detail="PathGuard blocked this payment. No PayPal order was created.")
 
-    if payment.risk.decision == "REVIEW" and payment.status != "REVIEW_APPROVED":
+    if not _has_human_approval(payment):
         raise HTTPException(
             status_code=403,
             detail="This payment requires human approval before PayPal checkout.",
@@ -550,7 +550,7 @@ async def capture_paypal_order(payment_id: int, db: Session = Depends(get_db)):
     if payment.risk and payment.risk.decision == "BLOCK":
         raise HTTPException(status_code=403, detail="PathGuard blocked this payment.")
 
-    if payment.risk and payment.risk.decision == "REVIEW" and payment.status != "REVIEW_APPROVED":
+    if not _has_human_approval(payment):
         raise HTTPException(status_code=403, detail="This payment requires human approval before PayPal processing.")
 
     paypal_order = payment.paypal_order
