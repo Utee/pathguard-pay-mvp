@@ -275,6 +275,107 @@ def paypal_cancel(token: str | None = None):
     return _frontend_redirect("/", paypal="cancelled", payment_id=token)
 
 
+@router.post("/paypal/sync")
+async def sync_paypal_order(token: str, db: Session = Depends(get_db)):
+    """
+    Recover and finalize a PayPal checkout after the buyer returns.
+
+    The endpoint is intentionally idempotent: if PayPal already completed
+    the order, PathGuard simply synchronizes its local state.
+    """
+    order = db.query(PayPalOrder).filter(PayPalOrder.paypal_order_id == token).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Unknown PayPal order")
+
+    payment = db.get(PaymentRequest, order.payment_request_id)
+    if not payment:
+        raise HTTPException(status_code=404, detail="Payment not found")
+
+    if payment.risk and payment.risk.decision == "BLOCK":
+        raise HTTPException(status_code=403, detail="PathGuard blocked this payment.")
+
+    if payment.risk and payment.risk.decision == "REVIEW" and payment.status != "REVIEW_APPROVED":
+        raise HTTPException(
+            status_code=403,
+            detail="This payment requires human approval before PayPal processing.",
+        )
+
+    try:
+        client = PayPalClient()
+        order_data = await client.get_order(order.paypal_order_id)
+        paypal_status = order_data.get("status")
+
+        if paypal_status == "COMPLETED":
+            capture_id = _extract_capture_id(order_data)
+            order.status = "COMPLETED"
+            order.capture_id = capture_id
+            order.captured_at = order.captured_at or datetime.now(timezone.utc)
+            payment.status = "COMPLETED"
+            _audit(
+                db,
+                payment,
+                "PAYMENT_COMPLETED",
+                "PayPal order was already completed; PathGuard synchronized the payment.",
+                metadata={"capture_id": capture_id},
+            )
+            db.commit()
+            return {
+                "payment_id": payment.id,
+                "paypal_order_id": order.paypal_order_id,
+                "paypal_status": paypal_status,
+                "status": payment.status,
+                "capture_id": capture_id,
+            }
+
+        if paypal_status != "APPROVED":
+            order.status = paypal_status or "UNKNOWN"
+            payment.status = "PAYPAL_PENDING_APPROVAL" if paypal_status in {"CREATED", "PAYER_ACTION_REQUIRED"} else "PAYPAL_PENDING_CAPTURE"
+            db.commit()
+            return {
+                "payment_id": payment.id,
+                "paypal_order_id": order.paypal_order_id,
+                "paypal_status": paypal_status,
+                "status": payment.status,
+                "capture_id": order.capture_id,
+            }
+
+        capture_data = await client.capture_order(order.paypal_order_id)
+        capture_status = capture_data.get("status", "UNKNOWN")
+        capture_id = _extract_capture_id(capture_data)
+
+        order.status = capture_status
+        order.capture_id = capture_id
+
+        if capture_status == "COMPLETED":
+            order.captured_at = datetime.now(timezone.utc)
+            payment.status = "COMPLETED"
+            _audit(
+                db,
+                payment,
+                "PAYMENT_COMPLETED",
+                "PayPal payment captured during synchronization.",
+                metadata={"capture_id": capture_id},
+            )
+        else:
+            payment.status = "PAYPAL_PENDING_CAPTURE"
+
+        db.commit()
+
+        return {
+            "payment_id": payment.id,
+            "paypal_order_id": order.paypal_order_id,
+            "paypal_status": capture_status,
+            "status": payment.status,
+            "capture_id": capture_id,
+        }
+    except PayPalError as exc:
+        order.status = "CAPTURE_ERROR"
+        payment.status = "PAYPAL_CAPTURE_ERROR"
+        _audit(db, payment, "PAYPAL_CAPTURE_ERROR", str(exc))
+        db.commit()
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 @router.get("/{payment_id}")
 def get_payment(payment_id: int, db: Session = Depends(get_db)):
     payment = db.get(PaymentRequest, payment_id)
