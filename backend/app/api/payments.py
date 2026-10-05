@@ -192,6 +192,89 @@ def recipient_history(recipient_name: str, db: Session = Depends(get_db)):
     )
 
 
+@router.get("/paypal/return")
+async def paypal_return(token: str | None = None, db: Session = Depends(get_db)):
+    if not token:
+        return _frontend_redirect("/", paypal="error", message="Missing PayPal order token")
+
+    order = db.query(PayPalOrder).filter(PayPalOrder.paypal_order_id == token).first()
+    if not order:
+        return _frontend_redirect("/", paypal="error", message="Unknown PayPal order")
+
+    payment = db.get(PaymentRequest, order.payment_request_id)
+    if not payment:
+        return _frontend_redirect("/", paypal="error", message="Payment not found")
+
+    if payment.risk and payment.risk.decision == "REVIEW" and payment.status != "REVIEW_APPROVED":
+        return _frontend_redirect(
+            "/", paypal="blocked", payment_id=payment.id,
+            message="This payment requires human approval before capture.",
+        )
+
+    if not payment.risk or payment.risk.decision == "BLOCK":
+        return _frontend_redirect("/", paypal="blocked", payment_id=payment.id)
+
+    try:
+        client = PayPalClient()
+        order_data = await client.get_order(order.paypal_order_id)
+        paypal_status = order_data.get("status")
+
+        if paypal_status == "COMPLETED":
+            capture_id = _extract_capture_id(order_data)
+            order.status = "COMPLETED"
+            order.capture_id = capture_id
+            order.captured_at = order.captured_at or datetime.now(timezone.utc)
+            payment.status = "COMPLETED"
+            _audit(db, payment, "PAYMENT_COMPLETED", "PayPal reported the order as completed.", metadata={"capture_id": capture_id})
+            db.commit()
+            return _frontend_redirect("/", paypal="completed", payment_id=payment.id, order_id=order.paypal_order_id, capture_id=capture_id)
+
+        if paypal_status != "APPROVED":
+            order.status = paypal_status or "UNKNOWN"
+            payment.status = "PAYPAL_PENDING_CAPTURE"
+            db.commit()
+            return _frontend_redirect(
+                "/", paypal="error", payment_id=payment.id, order_id=order.paypal_order_id,
+                message=f"PayPal order was not approved. Current status: {paypal_status}",
+            )
+
+        capture_data = await client.capture_order(order.paypal_order_id)
+        capture_id = _extract_capture_id(capture_data)
+        capture_status = capture_data.get("status", "UNKNOWN")
+        order.status = capture_status
+        order.capture_id = capture_id
+
+        if capture_status == "COMPLETED":
+            order.captured_at = datetime.now(timezone.utc)
+            payment.status = "COMPLETED"
+            _audit(db, payment, "PAYMENT_COMPLETED", "PayPal payment captured after return.", metadata={"capture_id": capture_id})
+        else:
+            payment.status = "PAYPAL_PENDING_CAPTURE"
+
+        db.commit()
+
+        if capture_status == "COMPLETED":
+            return _frontend_redirect("/", paypal="completed", payment_id=payment.id, order_id=order.paypal_order_id, capture_id=capture_id)
+
+        return _frontend_redirect(
+            "/", paypal="pending", payment_id=payment.id, order_id=order.paypal_order_id,
+            message="PayPal approved the payment, but capture is still pending.",
+        )
+    except PayPalError as exc:
+        order.status = "CAPTURE_ERROR"
+        payment.status = "PAYPAL_CAPTURE_ERROR"
+        _audit(db, payment, "PAYPAL_CAPTURE_ERROR", str(exc))
+        db.commit()
+        return _frontend_redirect(
+            "/", paypal="error", payment_id=payment.id, order_id=order.paypal_order_id, message=str(exc),
+        )
+
+
+@router.get("/paypal/cancel")
+def paypal_cancel(token: str | None = None):
+    return _frontend_redirect("/", paypal="cancelled", payment_id=token)
+
+
 @router.get("/{payment_id}")
 def get_payment(payment_id: int, db: Session = Depends(get_db)):
     payment = db.get(PaymentRequest, payment_id)
@@ -403,85 +486,3 @@ async def capture_paypal_order(payment_id: int, db: Session = Depends(get_db)):
         capture_id=capture_id,
     )
 
-
-@router.get("/paypal/return")
-async def paypal_return(token: str | None = None, db: Session = Depends(get_db)):
-    if not token:
-        return _frontend_redirect("/", paypal="error", message="Missing PayPal order token")
-
-    order = db.query(PayPalOrder).filter(PayPalOrder.paypal_order_id == token).first()
-    if not order:
-        return _frontend_redirect("/", paypal="error", message="Unknown PayPal order")
-
-    payment = db.get(PaymentRequest, order.payment_request_id)
-    if not payment:
-        return _frontend_redirect("/", paypal="error", message="Payment not found")
-
-    if payment.risk and payment.risk.decision == "REVIEW" and payment.status != "REVIEW_APPROVED":
-        return _frontend_redirect(
-            "/", paypal="blocked", payment_id=payment.id,
-            message="This payment requires human approval before capture.",
-        )
-
-    if not payment.risk or payment.risk.decision == "BLOCK":
-        return _frontend_redirect("/", paypal="blocked", payment_id=payment.id)
-
-    try:
-        client = PayPalClient()
-        order_data = await client.get_order(order.paypal_order_id)
-        paypal_status = order_data.get("status")
-
-        if paypal_status == "COMPLETED":
-            capture_id = _extract_capture_id(order_data)
-            order.status = "COMPLETED"
-            order.capture_id = capture_id
-            order.captured_at = order.captured_at or datetime.now(timezone.utc)
-            payment.status = "COMPLETED"
-            _audit(db, payment, "PAYMENT_COMPLETED", "PayPal reported the order as completed.", metadata={"capture_id": capture_id})
-            db.commit()
-            return _frontend_redirect("/", paypal="completed", payment_id=payment.id, order_id=order.paypal_order_id, capture_id=capture_id)
-
-        if paypal_status != "APPROVED":
-            order.status = paypal_status or "UNKNOWN"
-            payment.status = "PAYPAL_PENDING_CAPTURE"
-            db.commit()
-            return _frontend_redirect(
-                "/", paypal="error", payment_id=payment.id, order_id=order.paypal_order_id,
-                message=f"PayPal order was not approved. Current status: {paypal_status}",
-            )
-
-        capture_data = await client.capture_order(order.paypal_order_id)
-        capture_id = _extract_capture_id(capture_data)
-        capture_status = capture_data.get("status", "UNKNOWN")
-        order.status = capture_status
-        order.capture_id = capture_id
-
-        if capture_status == "COMPLETED":
-            order.captured_at = datetime.now(timezone.utc)
-            payment.status = "COMPLETED"
-            _audit(db, payment, "PAYMENT_COMPLETED", "PayPal payment captured after return.", metadata={"capture_id": capture_id})
-        else:
-            payment.status = "PAYPAL_PENDING_CAPTURE"
-
-        db.commit()
-
-        if capture_status == "COMPLETED":
-            return _frontend_redirect("/", paypal="completed", payment_id=payment.id, order_id=order.paypal_order_id, capture_id=capture_id)
-
-        return _frontend_redirect(
-            "/", paypal="pending", payment_id=payment.id, order_id=order.paypal_order_id,
-            message="PayPal approved the payment, but capture is still pending.",
-        )
-    except PayPalError as exc:
-        order.status = "CAPTURE_ERROR"
-        payment.status = "PAYPAL_CAPTURE_ERROR"
-        _audit(db, payment, "PAYPAL_CAPTURE_ERROR", str(exc))
-        db.commit()
-        return _frontend_redirect(
-            "/", paypal="error", payment_id=payment.id, order_id=order.paypal_order_id, message=str(exc),
-        )
-
-
-@router.get("/paypal/cancel")
-def paypal_cancel(token: str | None = None):
-    return _frontend_redirect("/", paypal="cancelled", payment_id=token)
