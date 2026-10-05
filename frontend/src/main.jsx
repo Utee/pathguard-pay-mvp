@@ -94,16 +94,80 @@ function App() {
 
     const q = new URLSearchParams(window.location.search);
     const paypalState = q.get('paypal');
+    const paypalToken = q.get('token');
     const paymentId = q.get('payment_id');
     const orderId = q.get('order_id');
     const captureId = q.get('capture_id');
     const message = q.get('message');
 
-    if (!paypalState) return;
+    const savedPaymentId = localStorage.getItem('pathguard_paypal_payment_id');
+    const effectivePaymentId = paymentId || savedPaymentId;
 
-    setPaypalResult({ state: paypalState, paymentId, orderId, captureId, message });
-    restorePayment(paymentId);
-    load();
+    async function syncReturnedPayment(token) {
+      if (!token) return null;
+
+      try {
+        const r = await fetch(
+          `${API}/api/payments/paypal/sync?token=${encodeURIComponent(token)}`,
+          { method: 'POST' }
+        );
+        const d = await r.json();
+
+        if (!r.ok) {
+          throw new Error(d.detail || 'Could not synchronize PayPal payment');
+        }
+
+        return d;
+      } catch (e) {
+        setError(e.message || 'Could not synchronize PayPal payment');
+        return null;
+      }
+    }
+
+    async function restoreAfterPayPalReturn() {
+      let synced = null;
+
+      if (paypalToken) {
+        synced = await syncReturnedPayment(paypalToken);
+      } else if (effectivePaymentId) {
+        const current = await fetch(`${API}/api/payments/${effectivePaymentId}`);
+        if (current.ok) {
+          const d = await current.json();
+          const token = d?.paypal?.order_id;
+
+          if (token && ['PAYPAL_PENDING_APPROVAL', 'PAYPAL_PENDING_CAPTURE'].includes(d.status)) {
+            synced = await syncReturnedPayment(token);
+          }
+        }
+      }
+
+      const finalPaymentId = synced?.payment_id || effectivePaymentId;
+      if (finalPaymentId) {
+        await restorePayment(finalPaymentId);
+      }
+
+      if (synced?.status === 'COMPLETED') {
+        setPaypalResult({
+          state: 'completed',
+          paymentId: synced.payment_id,
+          orderId: synced.paypal_order_id,
+          captureId: synced.capture_id,
+        });
+      } else if (paypalState) {
+        setPaypalResult({
+          state: paypalState,
+          paymentId: finalPaymentId,
+          orderId: orderId || synced?.paypal_order_id,
+          captureId: captureId || synced?.capture_id,
+          message,
+        });
+      }
+
+      load();
+      localStorage.removeItem('pathguard_paypal_payment_id');
+    }
+
+    restoreAfterPayPalReturn();
 
     window.history.replaceState({}, '', window.location.pathname);
   }, []);
@@ -203,6 +267,7 @@ function App() {
       }));
 
       if (d.approval_url) {
+        localStorage.setItem('pathguard_paypal_payment_id', String(payment.payment_id));
         window.location.href = d.approval_url;
       } else {
         throw new Error('No PayPal approval URL returned');
