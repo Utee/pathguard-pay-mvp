@@ -117,6 +117,11 @@ function App() {
           throw new Error(d.detail || 'Could not synchronize PayPal payment');
         }
 
+        if (d.status === 'PAYPAL_REAUTH_REQUIRED' && d.approval_url) {
+          window.location.href = d.approval_url;
+          return null;
+        }
+
         return d;
       } catch (e) {
         setError(e.message || 'Could not synchronize PayPal payment');
@@ -319,6 +324,17 @@ function App() {
                 <b>Payment approved by PayPal.</b>
                 <small>The server is finishing the capture.</small>
                 {paypalResult.orderId && <small>Order ID: {paypalResult.orderId}</small>}
+              </div>
+            </div>
+          )}
+
+          {paypalResult?.state === 'reauth' && (
+            <div className="result-card pending">
+              <div className="result-icon"><ShieldAlert /></div>
+              <div className="result-copy">
+                <span className="result-kicker">PAYPAL CHECKOUT REFRESHED</span>
+                <b>A fresh PayPal checkout is required.</b>
+                <small>The previous checkout was no longer available, so PathGuard created a new one.</small>
               </div>
             </div>
           )}
