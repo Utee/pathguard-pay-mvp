@@ -99,6 +99,7 @@ function App() {
     const orderId = q.get('order_id');
     const captureId = q.get('capture_id');
     const message = q.get('message');
+    const approvalUrl = q.get('approval_url');
 
     const savedPaymentId = localStorage.getItem('pathguard_paypal_payment_id');
     const effectivePaymentId = paymentId || savedPaymentId;
@@ -130,6 +131,11 @@ function App() {
     }
 
     async function restoreAfterPayPalReturn() {
+      if (paypalState === 'reauth' && approvalUrl) {
+        window.location.href = approvalUrl;
+        return;
+      }
+
       let synced = null;
 
       if (paypalToken) {
