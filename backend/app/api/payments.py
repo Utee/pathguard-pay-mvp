@@ -7,7 +7,14 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.db import get_db
-from app.models import AuditEvent, PayPalOrder, PaymentRequest, Recipient, RiskAssessment, ReviewEvent
+from app.models import (
+    AuditEvent,
+    PayPalOrder,
+    PaymentRequest,
+    Recipient,
+    RiskAssessment,
+    ReviewEvent,
+)
 from app.schemas.payment import (
     AnalyzePaymentRequest,
     AnalyzePaymentResponse,
@@ -17,7 +24,11 @@ from app.schemas.payment import (
     RecipientHistoryResponse,
 )
 from app.services.ai import extract_payment_intent
-from app.services.paypal import PayPalClient, PayPalError
+from app.services.paypal import (
+    PayPalClient,
+    PayPalError,
+    PayPalResourceNotFound,
+)
 from app.services.risk_engine import assess_payment
 
 settings = get_settings()
@@ -45,14 +56,18 @@ def _audit(
 
 
 def _has_human_approval(payment: PaymentRequest) -> bool:
-    """Return whether a REVIEW payment has an explicit human approval event."""
+    """A REVIEW payment is approved only when its review history says so."""
     if not payment.risk or payment.risk.decision != "REVIEW":
         return True
 
-    return any(
-        event.action == "APPROVED"
-        for event in payment.review_events
-    )
+    approved_at = None
+    for event in payment.review_events:
+        if event.action == "REJECTED":
+            return False
+        if event.action == "APPROVED":
+            approved_at = event.created_at
+
+    return approved_at is not None
 
 
 def _paypal_approval_url(data: dict) -> str | None:
@@ -82,6 +97,178 @@ def _frontend_redirect(path: str, **params) -> RedirectResponse:
     if query:
         url = f"{url}?{query}"
     return RedirectResponse(url)
+
+
+def _ensure_payment_can_use_paypal(payment: PaymentRequest) -> None:
+    if not payment.risk:
+        raise HTTPException(status_code=400, detail="Payment has not been risk assessed.")
+
+    if payment.risk.decision == "BLOCK":
+        raise HTTPException(
+            status_code=403,
+            detail="PathGuard blocked this payment. No PayPal order was created.",
+        )
+
+    if not _has_human_approval(payment):
+        raise HTTPException(
+            status_code=403,
+            detail="This payment requires human approval before PayPal processing.",
+        )
+
+    if payment.status == "REVIEW_REJECTED":
+        raise HTTPException(
+            status_code=403,
+            detail="This payment was rejected during human review.",
+        )
+
+
+async def _create_or_replace_paypal_order(
+    db: Session,
+    payment: PaymentRequest,
+    order: PayPalOrder | None = None,
+) -> PayPalOrder:
+    """Create a PayPal order, replacing a stale local order record when needed."""
+    data = await PayPalClient().create_order(
+        amount=payment.amount,
+        currency=payment.currency,
+        description=payment.purpose or f"Payment to {payment.recipient_name}",
+        reference_id=f"pathguard-payment-{payment.id}",
+    )
+
+    paypal_order_id = data.get("id")
+    approval_url = _paypal_approval_url(data)
+    if not paypal_order_id or not approval_url:
+        raise PayPalError("PayPal did not return a usable order ID and approval URL.")
+
+    if order is None:
+        order = PayPalOrder(payment_request_id=payment.id)
+        db.add(order)
+
+    order.paypal_order_id = paypal_order_id
+    order.status = data.get("status", "CREATED")
+    order.approval_url = approval_url
+    order.capture_id = None
+    order.captured_at = None
+
+    payment.status = "PAYPAL_PENDING_APPROVAL"
+    _audit(
+        db,
+        payment,
+        "PAYPAL_ORDER_CREATED",
+        "PayPal order created.",
+        metadata={"paypal_order_id": paypal_order_id},
+    )
+    db.commit()
+    db.refresh(order)
+    return order
+
+
+async def _refresh_paypal_order(
+    db: Session,
+    payment: PaymentRequest,
+    order: PayPalOrder,
+) -> dict:
+    """Synchronize one local order with PayPal and capture when approved."""
+    client = PayPalClient()
+
+    try:
+        order_data = await client.get_order(order.paypal_order_id)
+    except PayPalResourceNotFound as exc:
+        order.status = "STALE"
+        _audit(
+            db,
+            payment,
+            "PAYPAL_ORDER_STALE",
+            "PayPal no longer recognizes the stored order. A new checkout is required.",
+            metadata={"paypal_order_id": order.paypal_order_id, "debug_id": exc.debug_id},
+        )
+        db.commit()
+        return {
+            "payment_id": payment.id,
+            "status": "PAYPAL_REAUTH_REQUIRED",
+            "paypal_order_id": order.paypal_order_id,
+            "approval_url": None,
+            "message": "The previous PayPal checkout is no longer valid. A new checkout must be created.",
+        }
+
+    paypal_status = order_data.get("status")
+
+    if paypal_status == "COMPLETED":
+        capture_id = _extract_capture_id(order_data)
+        order.status = "COMPLETED"
+        order.capture_id = capture_id
+        order.captured_at = order.captured_at or datetime.now(timezone.utc)
+        payment.status = "COMPLETED"
+        _audit(
+            db,
+            payment,
+            "PAYMENT_COMPLETED",
+            "PayPal reported the order as completed; PathGuard synchronized the payment.",
+            metadata={"capture_id": capture_id},
+        )
+        db.commit()
+        return {
+            "payment_id": payment.id,
+            "paypal_order_id": order.paypal_order_id,
+            "paypal_status": paypal_status,
+            "status": payment.status,
+            "capture_id": capture_id,
+        }
+
+    order.status = paypal_status or "UNKNOWN"
+
+    if paypal_status in {"CREATED", "PAYER_ACTION_REQUIRED"}:
+        payment.status = "PAYPAL_PENDING_APPROVAL"
+        db.commit()
+        return {
+            "payment_id": payment.id,
+            "paypal_order_id": order.paypal_order_id,
+            "paypal_status": paypal_status,
+            "status": payment.status,
+            "capture_id": order.capture_id,
+            "approval_url": order.approval_url,
+        }
+
+    if paypal_status != "APPROVED":
+        payment.status = "PAYPAL_PENDING_CAPTURE"
+        db.commit()
+        return {
+            "payment_id": payment.id,
+            "paypal_order_id": order.paypal_order_id,
+            "paypal_status": paypal_status,
+            "status": payment.status,
+            "capture_id": order.capture_id,
+        }
+
+    capture_data = await client.capture_order(order.paypal_order_id)
+    capture_status = capture_data.get("status", "UNKNOWN")
+    capture_id = _extract_capture_id(capture_data)
+
+    order.status = capture_status
+    order.capture_id = capture_id
+
+    if capture_status == "COMPLETED":
+        order.captured_at = datetime.now(timezone.utc)
+        payment.status = "COMPLETED"
+        _audit(
+            db,
+            payment,
+            "PAYMENT_COMPLETED",
+            "PayPal payment captured by PathGuard.",
+            metadata={"capture_id": capture_id},
+        )
+    else:
+        payment.status = "PAYPAL_PENDING_CAPTURE"
+
+    db.commit()
+
+    return {
+        "payment_id": payment.id,
+        "paypal_order_id": order.paypal_order_id,
+        "paypal_status": capture_status,
+        "status": payment.status,
+        "capture_id": capture_id,
+    }
 
 
 @router.post("/analyze", response_model=AnalyzePaymentResponse)
@@ -216,68 +403,76 @@ async def paypal_return(token: str | None = None, db: Session = Depends(get_db))
     if not payment:
         return _frontend_redirect("/", paypal="error", message="Payment not found")
 
-    if not _has_human_approval(payment):
-        return _frontend_redirect(
-            "/", paypal="blocked", payment_id=payment.id,
-            message="This payment requires human approval before capture.",
-        )
-
-    if not payment.risk or payment.risk.decision == "BLOCK":
-        return _frontend_redirect("/", paypal="blocked", payment_id=payment.id)
-
     try:
-        client = PayPalClient()
-        order_data = await client.get_order(order.paypal_order_id)
-        paypal_status = order_data.get("status")
+        _ensure_payment_can_use_paypal(payment)
+        result = await _refresh_paypal_order(db, payment, order)
 
-        if paypal_status == "COMPLETED":
-            capture_id = _extract_capture_id(order_data)
-            order.status = "COMPLETED"
-            order.capture_id = capture_id
-            order.captured_at = order.captured_at or datetime.now(timezone.utc)
-            payment.status = "COMPLETED"
-            _audit(db, payment, "PAYMENT_COMPLETED", "PayPal reported the order as completed.", metadata={"capture_id": capture_id})
-            db.commit()
-            return _frontend_redirect("/", paypal="completed", payment_id=payment.id, order_id=order.paypal_order_id, capture_id=capture_id)
-
-        if paypal_status != "APPROVED":
-            order.status = paypal_status or "UNKNOWN"
-            payment.status = "PAYPAL_PENDING_CAPTURE"
-            db.commit()
+        if result.get("status") == "PAYPAL_REAUTH_REQUIRED":
+            replacement = await _create_or_replace_paypal_order(db, payment, order)
             return _frontend_redirect(
-                "/", paypal="error", payment_id=payment.id, order_id=order.paypal_order_id,
-                message=f"PayPal order was not approved. Current status: {paypal_status}",
+                "/",
+                paypal="reauth",
+                payment_id=payment.id,
+                order_id=replacement.paypal_order_id,
+                approval_url=replacement.approval_url,
             )
 
-        capture_data = await client.capture_order(order.paypal_order_id)
-        capture_id = _extract_capture_id(capture_data)
-        capture_status = capture_data.get("status", "UNKNOWN")
-        order.status = capture_status
-        order.capture_id = capture_id
+        if result.get("status") == "COMPLETED":
+            return _frontend_redirect(
+                "/",
+                paypal="completed",
+                payment_id=payment.id,
+                order_id=result.get("paypal_order_id"),
+                capture_id=result.get("capture_id"),
+            )
 
-        if capture_status == "COMPLETED":
-            order.captured_at = datetime.now(timezone.utc)
-            payment.status = "COMPLETED"
-            _audit(db, payment, "PAYMENT_COMPLETED", "PayPal payment captured after return.", metadata={"capture_id": capture_id})
-        else:
-            payment.status = "PAYPAL_PENDING_CAPTURE"
-
-        db.commit()
-
-        if capture_status == "COMPLETED":
-            return _frontend_redirect("/", paypal="completed", payment_id=payment.id, order_id=order.paypal_order_id, capture_id=capture_id)
+        if result.get("status") == "PAYPAL_PENDING_APPROVAL":
+            return _frontend_redirect(
+                "/",
+                paypal="pending",
+                payment_id=payment.id,
+                order_id=result.get("paypal_order_id"),
+                message="PayPal checkout has not been approved yet.",
+            )
 
         return _frontend_redirect(
-            "/", paypal="pending", payment_id=payment.id, order_id=order.paypal_order_id,
-            message="PayPal approved the payment, but capture is still pending.",
+            "/",
+            paypal="pending",
+            payment_id=payment.id,
+            order_id=result.get("paypal_order_id"),
+            message="PayPal approved the order, but capture is still pending.",
+        )
+    except HTTPException as exc:
+        return _frontend_redirect(
+            "/",
+            paypal="blocked",
+            payment_id=payment.id,
+            message=str(exc.detail),
+        )
+    except PayPalResourceNotFound:
+        # _refresh_paypal_order normally consumes this case. Keep the callback
+        # safe if that behavior changes later.
+        return _frontend_redirect(
+            "/",
+            paypal="reauth",
+            payment_id=payment.id,
+            message="The previous PayPal checkout is no longer valid.",
         )
     except PayPalError as exc:
-        order.status = "CAPTURE_ERROR"
         payment.status = "PAYPAL_CAPTURE_ERROR"
-        _audit(db, payment, "PAYPAL_CAPTURE_ERROR", str(exc))
+        _audit(
+            db,
+            payment,
+            "PAYPAL_ERROR",
+            str(exc),
+            metadata={"status_code": exc.status_code, "debug_id": exc.debug_id},
+        )
         db.commit()
         return _frontend_redirect(
-            "/", paypal="error", payment_id=payment.id, order_id=order.paypal_order_id, message=str(exc),
+            "/",
+            paypal="error",
+            payment_id=payment.id,
+            message=str(exc),
         )
 
 
@@ -288,12 +483,6 @@ def paypal_cancel(token: str | None = None):
 
 @router.post("/paypal/sync")
 async def sync_paypal_order(token: str, db: Session = Depends(get_db)):
-    """
-    Recover and finalize a PayPal checkout after the buyer returns.
-
-    The endpoint is intentionally idempotent: if PayPal already completed
-    the order, PathGuard simply synchronizes its local state.
-    """
     order = db.query(PayPalOrder).filter(PayPalOrder.paypal_order_id == token).first()
     if not order:
         raise HTTPException(status_code=404, detail="Unknown PayPal order")
@@ -302,88 +491,22 @@ async def sync_paypal_order(token: str, db: Session = Depends(get_db)):
     if not payment:
         raise HTTPException(status_code=404, detail="Payment not found")
 
-    if payment.risk and payment.risk.decision == "BLOCK":
-        raise HTTPException(status_code=403, detail="PathGuard blocked this payment.")
-
-    if not _has_human_approval(payment):
-        raise HTTPException(
-            status_code=403,
-            detail="This payment requires human approval before PayPal processing.",
-        )
+    _ensure_payment_can_use_paypal(payment)
 
     try:
-        client = PayPalClient()
-        order_data = await client.get_order(order.paypal_order_id)
-        paypal_status = order_data.get("status")
+        result = await _refresh_paypal_order(db, payment, order)
 
-        if paypal_status == "COMPLETED":
-            capture_id = _extract_capture_id(order_data)
-            order.status = "COMPLETED"
-            order.capture_id = capture_id
-            order.captured_at = order.captured_at or datetime.now(timezone.utc)
-            payment.status = "COMPLETED"
-            _audit(
-                db,
-                payment,
-                "PAYMENT_COMPLETED",
-                "PayPal order was already completed; PathGuard synchronized the payment.",
-                metadata={"capture_id": capture_id},
-            )
-            db.commit()
+        if result.get("status") == "PAYPAL_REAUTH_REQUIRED":
+            replacement = await _create_or_replace_paypal_order(db, payment, order)
             return {
-                "payment_id": payment.id,
-                "paypal_order_id": order.paypal_order_id,
-                "paypal_status": paypal_status,
-                "status": payment.status,
-                "capture_id": capture_id,
+                **result,
+                "paypal_order_id": replacement.paypal_order_id,
+                "approval_url": replacement.approval_url,
+                "message": "The previous PayPal checkout was stale. A fresh checkout is ready.",
             }
 
-        if paypal_status != "APPROVED":
-            order.status = paypal_status or "UNKNOWN"
-            payment.status = "PAYPAL_PENDING_APPROVAL" if paypal_status in {"CREATED", "PAYER_ACTION_REQUIRED"} else "PAYPAL_PENDING_CAPTURE"
-            db.commit()
-            return {
-                "payment_id": payment.id,
-                "paypal_order_id": order.paypal_order_id,
-                "paypal_status": paypal_status,
-                "status": payment.status,
-                "capture_id": order.capture_id,
-            }
-
-        capture_data = await client.capture_order(order.paypal_order_id)
-        capture_status = capture_data.get("status", "UNKNOWN")
-        capture_id = _extract_capture_id(capture_data)
-
-        order.status = capture_status
-        order.capture_id = capture_id
-
-        if capture_status == "COMPLETED":
-            order.captured_at = datetime.now(timezone.utc)
-            payment.status = "COMPLETED"
-            _audit(
-                db,
-                payment,
-                "PAYMENT_COMPLETED",
-                "PayPal payment captured during synchronization.",
-                metadata={"capture_id": capture_id},
-            )
-        else:
-            payment.status = "PAYPAL_PENDING_CAPTURE"
-
-        db.commit()
-
-        return {
-            "payment_id": payment.id,
-            "paypal_order_id": order.paypal_order_id,
-            "paypal_status": capture_status,
-            "status": payment.status,
-            "capture_id": capture_id,
-        }
+        return result
     except PayPalError as exc:
-        order.status = "CAPTURE_ERROR"
-        payment.status = "PAYPAL_CAPTURE_ERROR"
-        _audit(db, payment, "PAYPAL_CAPTURE_ERROR", str(exc))
-        db.commit()
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
@@ -465,6 +588,7 @@ def payment_audit(payment_id: int, db: Session = Depends(get_db)):
     payment = db.get(PaymentRequest, payment_id)
     if not payment:
         raise HTTPException(status_code=404, detail="Payment request not found")
+
     return [
         AuditEventResponse(
             id=event.id,
@@ -483,55 +607,56 @@ async def create_paypal_order(payment_id: int, db: Session = Depends(get_db)):
     payment = db.get(PaymentRequest, payment_id)
     if not payment:
         raise HTTPException(status_code=404, detail="Payment request not found")
-    if not payment.risk:
-        raise HTTPException(status_code=400, detail="Payment has not been risk assessed")
 
-    if payment.risk.decision == "BLOCK":
-        raise HTTPException(status_code=403, detail="PathGuard blocked this payment. No PayPal order was created.")
+    _ensure_payment_can_use_paypal(payment)
 
-    if not _has_human_approval(payment):
-        raise HTTPException(
-            status_code=403,
-            detail="This payment requires human approval before PayPal checkout.",
-        )
+    existing = payment.paypal_order
 
-    if payment.status == "REVIEW_REJECTED":
-        raise HTTPException(status_code=403, detail="This payment was rejected during human review.")
-
-    if payment.paypal_order and payment.paypal_order.status in {"CREATED", "SAVED", "APPROVED"}:
+    if existing and existing.status == "COMPLETED":
         return PayPalCreateResponse(
             payment_id=payment.id,
-            paypal_order_id=payment.paypal_order.paypal_order_id,
-            status=payment.paypal_order.status,
-            approval_url=payment.paypal_order.approval_url,
+            paypal_order_id=existing.paypal_order_id,
+            status=existing.status,
+            approval_url=existing.approval_url,
         )
+
+    if existing and existing.status in {"CREATED", "SAVED", "APPROVED"}:
+        try:
+            current = await PayPalClient().get_order(existing.paypal_order_id)
+            current_status = current.get("status")
+            existing.status = current_status or existing.status
+            existing.approval_url = _paypal_approval_url(current) or existing.approval_url
+            db.commit()
+
+            if current_status == "COMPLETED":
+                existing.capture_id = _extract_capture_id(current)
+                existing.captured_at = existing.captured_at or datetime.now(timezone.utc)
+                payment.status = "COMPLETED"
+                db.commit()
+            else:
+                return PayPalCreateResponse(
+                    payment_id=payment.id,
+                    paypal_order_id=existing.paypal_order_id,
+                    status=existing.status,
+                    approval_url=existing.approval_url,
+                )
+        except PayPalResourceNotFound:
+            existing.status = "STALE"
+            _audit(
+                db,
+                payment,
+                "PAYPAL_ORDER_STALE",
+                "Stored PayPal order was not found; creating a replacement checkout.",
+                metadata={"paypal_order_id": existing.paypal_order_id},
+            )
+            db.commit()
+        except PayPalError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     try:
-        data = await PayPalClient().create_order(
-            amount=payment.amount,
-            currency=payment.currency,
-            description=payment.purpose or f"Payment to {payment.recipient_name}",
-        )
+        order = await _create_or_replace_paypal_order(db, payment, existing)
     except PayPalError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-    paypal_order_id = data.get("id")
-    approval_url = _paypal_approval_url(data)
-    if not paypal_order_id or not approval_url:
-        raise HTTPException(status_code=502, detail="PayPal did not return a usable approval URL.")
-
-    order = PayPalOrder(
-        payment_request_id=payment.id,
-        paypal_order_id=paypal_order_id,
-        status=data.get("status", "CREATED"),
-        approval_url=approval_url,
-    )
-    db.add(order)
-
-    payment.status = "PAYPAL_PENDING_APPROVAL"
-    _audit(db, payment, "PAYPAL_ORDER_CREATED", "PayPal order created.", metadata={"paypal_order_id": paypal_order_id})
-    db.commit()
-    db.refresh(order)
 
     return PayPalCreateResponse(
         payment_id=payment.id,
@@ -547,11 +672,7 @@ async def capture_paypal_order(payment_id: int, db: Session = Depends(get_db)):
     if not payment or not payment.paypal_order:
         raise HTTPException(status_code=404, detail="PayPal order not found")
 
-    if payment.risk and payment.risk.decision == "BLOCK":
-        raise HTTPException(status_code=403, detail="PathGuard blocked this payment.")
-
-    if not _has_human_approval(payment):
-        raise HTTPException(status_code=403, detail="This payment requires human approval before PayPal processing.")
+    _ensure_payment_can_use_paypal(payment)
 
     paypal_order = payment.paypal_order
 
@@ -564,37 +685,24 @@ async def capture_paypal_order(payment_id: int, db: Session = Depends(get_db)):
         )
 
     try:
-        client = PayPalClient()
-        order_data = await client.get_order(paypal_order.paypal_order_id)
-        paypal_status = order_data.get("status")
-
-        if paypal_status != "APPROVED":
-            raise HTTPException(
-                status_code=400,
-                detail=f"PayPal order is not approved. Current status: {paypal_status}",
-            )
-
-        data = await client.capture_order(paypal_order.paypal_order_id)
+        result = await _refresh_paypal_order(db, payment, paypal_order)
+    except PayPalResourceNotFound:
+        raise HTTPException(
+            status_code=409,
+            detail="The PayPal order is no longer valid. Create a new checkout.",
+        ) from None
     except PayPalError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    capture_id = _extract_capture_id(data)
-    paypal_order.status = data.get("status", "UNKNOWN")
-    paypal_order.capture_id = capture_id
-
-    if paypal_order.status == "COMPLETED":
-        paypal_order.captured_at = datetime.now(timezone.utc)
-        payment.status = "COMPLETED"
-        _audit(db, payment, "PAYMENT_COMPLETED", "PayPal payment captured.", metadata={"capture_id": capture_id})
-    else:
-        payment.status = "PAYPAL_PENDING_CAPTURE"
-
-    db.commit()
+    if result.get("status") == "PAYPAL_REAUTH_REQUIRED":
+        raise HTTPException(
+            status_code=409,
+            detail="The PayPal order is no longer valid. Create a new checkout.",
+        )
 
     return PayPalCaptureResponse(
         payment_id=payment.id,
-        paypal_order_id=paypal_order.paypal_order_id,
-        status=paypal_order.status,
-        capture_id=capture_id,
+        paypal_order_id=result["paypal_order_id"],
+        status=result["status"],
+        capture_id=result.get("capture_id"),
     )
-
