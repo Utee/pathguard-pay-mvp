@@ -677,7 +677,7 @@ function Risk({ payment, decision, status, loading, onPay }) {
       </div>
 
       {decision === 'BLOCK' ? (
-        <div className="blocked"><ShieldX /> No PayPal order was created.</div>
+        <div className="blocked"><ShieldX /> {payment?.paypal ? 'Payment blocked before capture. PathGuard did not capture the existing PayPal order.' : 'No PayPal order was created.'}</div>
       ) : status === 'REVIEW_REJECTED' ? (
         <div className="blocked review-rejected"><ShieldX /> This payment was rejected during human review.</div>
       ) : status === 'REVIEW_PENDING' ? (
