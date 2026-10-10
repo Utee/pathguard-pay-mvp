@@ -25,7 +25,6 @@ def test_new_small_payment_is_allowed_with_new_recipient_signal():
             recipient_name="John",
             amount=200,
             currency="USD",
-            status="COMPLETED",
             purpose="website",
         ),
         "Pay John $200 for the website",
@@ -104,6 +103,7 @@ def test_repeat_recipient_normal_amount_is_allowed():
             recipient_name="John",
             amount=200,
             currency="USD",
+            status="COMPLETED",
             purpose="website",
         )
     )
