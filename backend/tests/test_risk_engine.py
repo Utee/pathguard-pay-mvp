@@ -123,3 +123,34 @@ def test_repeat_recipient_normal_amount_is_allowed():
     assert result.decision == "ALLOW"
     assert result.risk_score == 0
     assert result.new_recipient is False
+
+
+def test_blocked_attempt_does_not_change_recipient_risk_baseline():
+    db = make_db()
+    db.add(
+        PaymentRequest(
+            raw_instruction="Pay John $10000 for website",
+            recipient_name="John",
+            amount=10000,
+            currency="USD",
+            status="BLOCK",
+            purpose="website",
+        )
+    )
+    db.commit()
+
+    result = assess_payment(
+        db,
+        PaymentIntent(
+            recipient_name="John",
+            amount=200,
+            currency="USD",
+            purpose="website",
+        ),
+        "Pay John $200 for the website",
+    )
+
+    assert result.decision == "ALLOW"
+    assert result.risk_score == 20
+    assert result.new_recipient is True
+    db.close()
