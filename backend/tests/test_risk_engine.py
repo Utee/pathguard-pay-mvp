@@ -25,6 +25,7 @@ def test_new_small_payment_is_allowed_with_new_recipient_signal():
             recipient_name="John",
             amount=200,
             currency="USD",
+            status="COMPLETED",
             purpose="website",
         ),
         "Pay John $200 for the website",
@@ -64,6 +65,7 @@ def test_large_amount_after_normal_history_is_blocked():
                 recipient_name="John",
                 amount=200,
                 currency="USD",
+                status="COMPLETED",
                 purpose="website",
             ),
             PaymentRequest(
@@ -71,6 +73,7 @@ def test_large_amount_after_normal_history_is_blocked():
                 recipient_name="John",
                 amount=150,
                 currency="USD",
+                status="COMPLETED",
                 purpose="website",
             ),
         ]
