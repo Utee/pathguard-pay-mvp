@@ -61,6 +61,7 @@ function App() {
   });
   const [limitSummary, setLimitSummary] = useState(null);
   const [limitsSaving, setLimitsSaving] = useState(false);
+  const [limitsInitialized, setLimitsInitialized] = useState(false);
   const [limitsError, setLimitsError] = useState('');
   const [limitsSaved, setLimitsSaved] = useState('');
 
@@ -73,7 +74,7 @@ function App() {
       if (reviews.ok) setReviewQueue(await reviews.json());
 
       const configuredLimits = await fetch(`${API}/api/limits/settings`);
-      if (configuredLimits.ok) {
+      if (configuredLimits.ok && !limitsInitialized) {
         const d = await configuredLimits.json();
         setLimitDraft({
           daily_limit: d.daily_limit,
@@ -82,6 +83,7 @@ function App() {
           per_transaction_limit: d.per_transaction_limit,
           timezone: d.timezone,
         });
+        setLimitsInitialized(true);
       }
 
       const usage = await fetch(`${API}/api/limits/summary`);
