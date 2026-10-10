@@ -12,8 +12,10 @@ AI payment safety layer for PayPal Sandbox.
 6. Stores payment requests and risk assessments in SQLite.
 7. Creates PayPal Sandbox orders only when the risk engine allows the payment or a human reviewer approves a `REVIEW` decision.
 8. Handles the PayPal buyer approval flow and server-side capture.
-9. Persists recent payment activity for the dashboard.
-10. Provides a React/Vite dashboard for analysis, human review, and PayPal checkout.
+9. Enforces configurable daily, weekly, monthly, and optional per-transaction spending limits.
+10. Reserves capacity for eligible in-flight payments and re-checks limits before PayPal checkout/capture.
+11. Persists recent payment activity for the dashboard.
+12. Provides a React/Vite dashboard for analysis, spending-limit settings, human review, and PayPal checkout.
 
 > No real money is moved by this project. PayPal integration is intended for the Sandbox.
 
@@ -152,6 +154,18 @@ PayPal credentials remain on the backend.
 
 Analyze a natural-language payment instruction.
 
+### GET `/api/limits/settings`
+
+Return the instance's current spending policy.
+
+### PUT `/api/limits/settings`
+
+Update spending limits. Send `daily_limit`, `weekly_limit`, `monthly_limit`, optional `per_transaction_limit`, and an IANA `timezone`. Set a period's limit to `null` to disable that specific cap; at least one cap must remain enabled. Defaults are USD 1,000 daily, USD 10,000 weekly, and USD 10,000 monthly, with no separate per-transaction cap and `Africa/Lagos` period boundaries.
+
+### GET `/api/limits/summary`
+
+Return current-period spending plus active reservations, and remaining capacity for each configured limit.
+
 ### GET `/api/payments`
 
 Return recent locally stored payment requests.
@@ -244,4 +258,8 @@ Handle a cancelled PayPal approval and redirect back to the frontend.
 - PayPal Client ID and Secret must stay server-side.
 - Do not treat an AI-generated payment intent as authoritative without deterministic validation.
 - Payments should only reach a payment rail after the PathGuard risk decision permits them; `REVIEW` payments also require an explicit human approval.
+- Spending caps are currently one shared policy per running MVP instance because user authentication/accounts are not implemented yet. Do not expose this dashboard or its API publicly until authentication and per-user authorization are added.
+- Spending limits are denominated in USD. Non-USD payments are blocked until currency-specific policies or reliable conversion rates are implemented.
+- A new eligible intent reserves budget for 30 minutes; an order placed with PayPal reserves budget for up to 24 hours. The server re-checks limits before capture, so an expired reservation does not by itself authorize payment.
+- Blocked, rejected, and cancelled attempts do not count as spending. Completed payments count at their capture timestamp.
 - The current review endpoints are unauthenticated and intended for local MVP/testing only. Add authentication and reviewer authorization before exposing them publicly.
