@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -30,6 +30,12 @@ from app.services.paypal import (
     PayPalResourceNotFound,
 )
 from app.services.risk_engine import assess_payment
+from app.services.spending_limits import (
+    ANALYSIS_RESERVATION_MINUTES,
+    PAYPAL_RESERVATION_HOURS,
+    apply_spending_policy,
+    payment_limit_violations,
+)
 
 settings = get_settings()
 
@@ -53,6 +59,55 @@ def _audit(
             metadata=metadata,
         )
     )
+
+
+def _block_for_spending_limit(
+    db: Session,
+    payment: PaymentRequest,
+    violations: list[str],
+) -> None:
+    """Persist a hard policy block and stop the payment before capture."""
+    unique_reasons = list(payment.risk.reasons if payment.risk else [])
+    for reason in violations:
+        if reason not in unique_reasons:
+            unique_reasons.append(reason)
+
+    payment.status = "BLOCK"
+    payment.limit_reservation_expires_at = None
+    if payment.risk:
+        payment.risk.decision = "BLOCK"
+        payment.risk.risk_score = 100
+        payment.risk.reasons = unique_reasons
+
+    _audit(
+        db,
+        payment,
+        "SPENDING_LIMIT_BLOCKED",
+        "PathGuard blocked payment because a configured spending limit would be exceeded.",
+        metadata={"violations": violations},
+    )
+    db.commit()
+    raise HTTPException(
+        status_code=403,
+        detail="PathGuard spending limits blocked this payment: " + " ".join(violations),
+    )
+
+
+def _enforce_current_spending_limits(
+    db: Session,
+    payment: PaymentRequest,
+    *,
+    reserve_hours: int | None = None,
+) -> None:
+    violations = payment_limit_violations(db, payment)
+    if violations:
+        _block_for_spending_limit(db, payment, violations)
+
+    if reserve_hours is not None:
+        payment.limit_reservation_expires_at = datetime.now(timezone.utc) + timedelta(
+            hours=reserve_hours
+        )
+        db.commit()
 
 
 def _has_human_approval(payment: PaymentRequest) -> bool:
@@ -151,6 +206,9 @@ async def _create_or_replace_paypal_order(
     order.captured_at = None
 
     payment.status = "PAYPAL_PENDING_APPROVAL"
+    payment.limit_reservation_expires_at = datetime.now(timezone.utc) + timedelta(
+        hours=PAYPAL_RESERVATION_HOURS
+    )
     _audit(
         db,
         payment,
@@ -199,6 +257,7 @@ async def _refresh_paypal_order(
         order.capture_id = capture_id
         order.captured_at = order.captured_at or datetime.now(timezone.utc)
         payment.status = "COMPLETED"
+        payment.limit_reservation_expires_at = None
         _audit(
             db,
             payment,
@@ -240,6 +299,11 @@ async def _refresh_paypal_order(
             "capture_id": order.capture_id,
         }
 
+    # Re-check limits immediately before capture; a checkout can stay open while
+    # the user changes policy or other pending payments consume the budget.
+    _enforce_current_spending_limits(
+        db, payment, reserve_hours=PAYPAL_RESERVATION_HOURS
+    )
     capture_data = await client.capture_order(order.paypal_order_id)
     capture_status = capture_data.get("status", "UNKNOWN")
     capture_id = _extract_capture_id(capture_data)
@@ -250,6 +314,7 @@ async def _refresh_paypal_order(
     if capture_status == "COMPLETED":
         order.captured_at = datetime.now(timezone.utc)
         payment.status = "COMPLETED"
+        payment.limit_reservation_expires_at = None
         _audit(
             db,
             payment,
@@ -279,6 +344,7 @@ def analyze_payment(payload: AnalyzePaymentRequest, db: Session = Depends(get_db
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     risk = assess_payment(db, intent, payload.instruction)
+    risk, limit_violations = apply_spending_policy(db, intent, risk)
 
     recipient_name = intent.recipient_name.strip()
     recipient = (
@@ -300,6 +366,11 @@ def analyze_payment(payload: AnalyzePaymentRequest, db: Session = Depends(get_db
         currency=intent.currency.upper(),
         purpose=intent.purpose,
         status="REVIEW_PENDING" if risk.decision == "REVIEW" else risk.decision,
+        limit_reservation_expires_at=(
+            datetime.now(timezone.utc) + timedelta(minutes=ANALYSIS_RESERVATION_MINUTES)
+            if risk.decision != "BLOCK"
+            else None
+        ),
     )
     db.add(payment)
     db.flush()
@@ -331,7 +402,11 @@ def analyze_payment(payload: AnalyzePaymentRequest, db: Session = Depends(get_db
         payment,
         "RISK_ASSESSED",
         f"PathGuard decision: {risk.decision} ({risk.risk_score}/100).",
-        metadata={"decision": risk.decision, "risk_score": risk.risk_score},
+        metadata={
+            "decision": risk.decision,
+            "risk_score": risk.risk_score,
+            "spending_limit_violations": limit_violations,
+        },
     )
 
     db.commit()
@@ -376,7 +451,10 @@ def recipient_history(recipient_name: str, db: Session = Depends(get_db)):
 
     payments = (
         db.query(PaymentRequest)
-        .filter(PaymentRequest.recipient_id == recipient.id)
+        .filter(
+            PaymentRequest.recipient_id == recipient.id,
+            PaymentRequest.status == "COMPLETED",
+        )
         .order_by(PaymentRequest.created_at.desc())
         .all()
     )
@@ -477,7 +555,23 @@ async def paypal_return(token: str | None = None, db: Session = Depends(get_db))
 
 
 @router.get("/paypal/cancel")
-def paypal_cancel(token: str | None = None):
+def paypal_cancel(token: str | None = None, db: Session = Depends(get_db)):
+    if token:
+        order = db.query(PayPalOrder).filter(PayPalOrder.paypal_order_id == token).first()
+        if order and order.status != "COMPLETED":
+            payment = db.get(PaymentRequest, order.payment_request_id)
+            order.status = "CANCELLED"
+            if payment and payment.status != "COMPLETED":
+                payment.status = "CANCELLED"
+                payment.limit_reservation_expires_at = None
+                _audit(
+                    db,
+                    payment,
+                    "PAYPAL_CHECKOUT_CANCELLED",
+                    "Buyer cancelled PayPal checkout; the spending reservation was released.",
+                    metadata={"paypal_order_id": order.paypal_order_id},
+                )
+            db.commit()
     return _frontend_redirect("/", paypal="cancelled", payment_id=token)
 
 
@@ -518,16 +612,22 @@ def get_payment(payment_id: int, db: Session = Depends(get_db)):
 
     history = None
     if payment.recipient:
-        amounts = [float(p.amount) for p in payment.recipient.payments]
+        completed_payments = (
+            db.query(PaymentRequest)
+            .filter(
+                PaymentRequest.recipient_id == payment.recipient.id,
+                PaymentRequest.status == "COMPLETED",
+            )
+            .order_by(PaymentRequest.created_at.desc())
+            .all()
+        )
+        amounts = [float(p.amount) for p in completed_payments]
         history = {
             "recipient": payment.recipient.name,
             "total_payments": len(amounts),
             "total_amount": sum(amounts),
             "average_amount": (sum(amounts) / len(amounts)) if amounts else 0.0,
-            "last_payment_at": max(
-                (p.created_at for p in payment.recipient.payments),
-                default=None,
-            ),
+            "last_payment_at": completed_payments[0].created_at if completed_payments else None,
         }
 
     return {
@@ -620,6 +720,10 @@ async def create_paypal_order(payment_id: int, db: Session = Depends(get_db)):
             approval_url=existing.approval_url,
         )
 
+    _enforce_current_spending_limits(
+        db, payment, reserve_hours=PAYPAL_RESERVATION_HOURS
+    )
+
     if existing and existing.status in {"CREATED", "SAVED", "APPROVED"}:
         try:
             current = await PayPalClient().get_order(existing.paypal_order_id)
@@ -632,6 +736,7 @@ async def create_paypal_order(payment_id: int, db: Session = Depends(get_db)):
                 existing.capture_id = _extract_capture_id(current)
                 existing.captured_at = existing.captured_at or datetime.now(timezone.utc)
                 payment.status = "COMPLETED"
+                payment.limit_reservation_expires_at = None
                 db.commit()
             else:
                 return PayPalCreateResponse(

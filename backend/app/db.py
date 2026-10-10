@@ -30,6 +30,7 @@ def _sqlite_additive_migrations() -> None:
     migrations = {
         "payment_requests": {
             "recipient_id": "INTEGER",
+            "limit_reservation_expires_at": "DATETIME",
         },
         "paypal_orders": {
             "payment_request_id": "INTEGER",

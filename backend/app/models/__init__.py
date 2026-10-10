@@ -5,6 +5,7 @@ from app.models.payment import (
     Recipient,
     ReviewEvent,
     RiskAssessment,
+    SpendingLimitSettings,
 )
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "Recipient",
     "ReviewEvent",
     "RiskAssessment",
+    "SpendingLimitSettings",
 ]

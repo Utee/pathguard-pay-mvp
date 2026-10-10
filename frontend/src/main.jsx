@@ -10,6 +10,8 @@ import {
   History,
   PartyPopper,
   XCircle,
+  Settings2,
+  Save,
 } from 'lucide-react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
@@ -50,6 +52,18 @@ function App() {
   const [payLoading, setPayLoading] = useState(false);
   const [error, setError] = useState('');
   const [paypalResult, setPaypalResult] = useState(null);
+  const [limitDraft, setLimitDraft] = useState({
+    daily_limit: 1000,
+    weekly_limit: 10000,
+    monthly_limit: 10000,
+    per_transaction_limit: null,
+    timezone: 'Africa/Lagos',
+  });
+  const [limitSummary, setLimitSummary] = useState(null);
+  const [limitsSaving, setLimitsSaving] = useState(false);
+  const [limitsInitialized, setLimitsInitialized] = useState(false);
+  const [limitsError, setLimitsError] = useState('');
+  const [limitsSaved, setLimitsSaved] = useState('');
 
   async function load() {
     try {
@@ -58,6 +72,22 @@ function App() {
 
       const reviews = await fetch(`${API}/api/reviews`);
       if (reviews.ok) setReviewQueue(await reviews.json());
+
+      const configuredLimits = await fetch(`${API}/api/limits/settings`);
+      if (configuredLimits.ok && !limitsInitialized) {
+        const d = await configuredLimits.json();
+        setLimitDraft({
+          daily_limit: d.daily_limit,
+          weekly_limit: d.weekly_limit,
+          monthly_limit: d.monthly_limit,
+          per_transaction_limit: d.per_transaction_limit,
+          timezone: d.timezone,
+        });
+        setLimitsInitialized(true);
+      }
+
+      const usage = await fetch(`${API}/api/limits/summary`);
+      if (usage.ok) setLimitSummary(await usage.json());
     } catch {
       // Keep the dashboard usable if history is temporarily unavailable.
     }
@@ -216,6 +246,53 @@ function App() {
     } finally {
       setReviewLoading(false);
       load();
+    }
+  }
+
+  async function saveLimits() {
+    setLimitsSaving(true);
+    setLimitsError('');
+    setLimitsSaved('');
+
+    const fields = ['daily_limit', 'weekly_limit', 'monthly_limit', 'per_transaction_limit'];
+    const payload = { ...limitDraft };
+    for (const field of fields) {
+      const value = payload[field];
+      payload[field] = value === '' || value === null || value === undefined
+        ? null
+        : Number(value);
+    }
+
+    if (fields.every((field) => payload[field] === null)) {
+      setLimitsError('Keep at least one spending limit enabled.');
+      setLimitsSaving(false);
+      return;
+    }
+
+    try {
+      const r = await fetch(`${API}/api/limits/settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const d = await r.json();
+      if (!r.ok) {
+        const detail = typeof d.detail === 'string'
+          ? d.detail
+          : Array.isArray(d.detail)
+            ? d.detail.map((item) => item.msg).join('; ')
+            : 'Could not save spending limits';
+        throw new Error(detail);
+      }
+
+      setLimitDraft(d);
+      setLimitsSaved('Spending limits saved. New and pending payments will be checked against these settings.');
+      const summaryResponse = await fetch(`${API}/api/limits/summary`);
+      if (summaryResponse.ok) setLimitSummary(await summaryResponse.json());
+    } catch (e) {
+      setLimitsError(e.message || 'Could not save spending limits');
+    } finally {
+      setLimitsSaving(false);
     }
   }
 
@@ -435,6 +512,48 @@ function App() {
         </section>
 
         <aside>
+          <div className="card info limits-card">
+            <h3><Settings2 /> Spending limits</h3>
+            <p className="limits-intro">Set your budget before paying. PathGuard checks these caps before creating a PayPal order and again before capture.</p>
+            <div className="limits-grid">
+              <label className="limit-field">Daily limit (USD)
+                <input type="number" min="0.01" step="0.01" value={limitDraft.daily_limit ?? ''} onChange={(e) => setLimitDraft((d) => ({ ...d, daily_limit: e.target.value === '' ? null : Number(e.target.value) }))} />
+              </label>
+              <label className="limit-field">Weekly limit (USD)
+                <input type="number" min="0.01" step="0.01" value={limitDraft.weekly_limit ?? ''} onChange={(e) => setLimitDraft((d) => ({ ...d, weekly_limit: e.target.value === '' ? null : Number(e.target.value) }))} />
+              </label>
+              <label className="limit-field">Monthly limit (USD)
+                <input type="number" min="0.01" step="0.01" value={limitDraft.monthly_limit ?? ''} onChange={(e) => setLimitDraft((d) => ({ ...d, monthly_limit: e.target.value === '' ? null : Number(e.target.value) }))} />
+              </label>
+              <label className="limit-field">Per-payment cap (optional)
+                <input type="number" min="0.01" step="0.01" placeholder="No separate cap" value={limitDraft.per_transaction_limit ?? ''} onChange={(e) => setLimitDraft((d) => ({ ...d, per_transaction_limit: e.target.value === '' ? null : Number(e.target.value) }))} />
+              </label>
+              <label className="limit-field limit-timezone">Reset periods in
+                <select value={limitDraft.timezone || 'Africa/Lagos'} onChange={(e) => setLimitDraft((d) => ({ ...d, timezone: e.target.value }))}>
+                  <option value="Africa/Lagos">Nigeria (Africa/Lagos)</option>
+                  <option value="UTC">UTC</option>
+                  <option value="Europe/London">United Kingdom (Europe/London)</option>
+                  <option value="America/New_York">US Eastern (America/New_York)</option>
+                </select>
+              </label>
+            </div>
+            {limitSummary && (
+              <div className="limits-usage">
+                <b>Current usage · includes active reservations</b>
+                <div><span>Today</span><strong>USD {Number(limitSummary.daily_used || 0).toLocaleString()} / {limitSummary.daily_limit == null ? 'No cap' : Number(limitSummary.daily_limit).toLocaleString()}</strong></div>
+                <div><span>This week</span><strong>USD {Number(limitSummary.weekly_used || 0).toLocaleString()} / {limitSummary.weekly_limit == null ? 'No cap' : Number(limitSummary.weekly_limit).toLocaleString()}</strong></div>
+                <div><span>This month</span><strong>USD {Number(limitSummary.monthly_used || 0).toLocaleString()} / {limitSummary.monthly_limit == null ? 'No cap' : Number(limitSummary.monthly_limit).toLocaleString()}</strong></div>
+                <small>Active reservations release when checkout is cancelled or the reservation expires. Only completed payments count as actual spend.</small>
+              </div>
+            )}
+            {limitsError && <div className="error limits-feedback">{limitsError}</div>}
+            {limitsSaved && <p className="limits-saved">{limitsSaved}</p>}
+            <button className="primary limits-save" disabled={limitsSaving} onClick={saveLimits}>
+              {limitsSaving ? <><Loader2 className="spin" /> Saving limits…</> : <><Save /> Save spending limits</>}
+            </button>
+            <small className="limits-footnote">This MVP currently has one shared policy per running instance, and limits are denominated in USD. Non-USD payments are blocked until currency conversion is supported.</small>
+          </div>
+
           <div className="card info">
             <h3><ShieldCheck /> How PathGuard works</h3>
             <Step n="01" t="Understand" d="AI turns your request into structured payment intent." />
@@ -560,7 +679,7 @@ function Risk({ payment, decision, status, loading, onPay }) {
       </div>
 
       {decision === 'BLOCK' ? (
-        <div className="blocked"><ShieldX /> No PayPal order was created.</div>
+        <div className="blocked"><ShieldX /> {payment?.paypal ? 'Payment blocked before capture. PathGuard did not capture the existing PayPal order.' : 'No PayPal order was created.'}</div>
       ) : status === 'REVIEW_REJECTED' ? (
         <div className="blocked review-rejected"><ShieldX /> This payment was rejected during human review.</div>
       ) : status === 'REVIEW_PENDING' ? (

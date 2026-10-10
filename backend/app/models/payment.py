@@ -32,6 +32,11 @@ class PaymentRequest(Base):
     currency: Mapped[str] = mapped_column(String(3), default="USD")
     purpose: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
+    # A short-lived reservation keeps concurrent or pending requests from overspending.
+    limit_reservation_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+
     # ANALYZED, REVIEW_PENDING, REVIEW_APPROVED, REVIEW_REJECTED,
     # ALLOW, BLOCK, PAYPAL_PENDING_APPROVAL, PAYPAL_PENDING_CAPTURE,
     # COMPLETED, CANCELLED, PAYPAL_CAPTURE_ERROR
@@ -122,3 +127,17 @@ class AuditEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
     payment_request: Mapped[PaymentRequest] = relationship(back_populates="audit_events")
+
+
+class SpendingLimitSettings(Base):
+    """Single-instance spending policy for the current local MVP (no user accounts yet)."""
+
+    __tablename__ = "spending_limit_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    daily_limit: Mapped[float | None] = mapped_column(Float, nullable=True, default=1000.0)
+    weekly_limit: Mapped[float | None] = mapped_column(Float, nullable=True, default=10000.0)
+    monthly_limit: Mapped[float | None] = mapped_column(Float, nullable=True, default=10000.0)
+    per_transaction_limit: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    timezone: Mapped[str] = mapped_column(String(80), default="Africa/Lagos")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
