@@ -1,9 +1,12 @@
+from datetime import datetime, timedelta, timezone
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import PaymentRequest, ReviewEvent
+from app.models import AuditEvent, PaymentRequest, ReviewEvent
+from app.services.spending_limits import ANALYSIS_RESERVATION_MINUTES, payment_limit_violations
 
 router = APIRouter(prefix="/api/reviews", tags=["human-review"])
 
@@ -58,7 +61,29 @@ def approve_review(payment_id: int, payload: ReviewDecision, db: Session = Depen
     if payment.status == "COMPLETED" or payment.paypal_order:
         raise HTTPException(status_code=409, detail="Payment has already entered PayPal processing")
 
+    violations = payment_limit_violations(db, payment)
+    if violations:
+        payment.status = "BLOCK"
+        payment.limit_reservation_expires_at = None
+        payment.risk.decision = "BLOCK"
+        payment.risk.risk_score = 100
+        payment.risk.reasons = list(dict.fromkeys([*(payment.risk.reasons or []), *violations]))
+        db.add(AuditEvent(
+            payment_request_id=payment.id,
+            event_type="SPENDING_LIMIT_BLOCKED",
+            message="Payment approval denied because a configured spending limit would be exceeded.",
+            metadata={"violations": violations},
+        ))
+        db.commit()
+        raise HTTPException(
+            status_code=403,
+            detail="Spending limits blocked this payment: " + " ".join(violations),
+        )
+
     payment.status = "REVIEW_APPROVED"
+    payment.limit_reservation_expires_at = datetime.now(timezone.utc) + timedelta(
+        minutes=ANALYSIS_RESERVATION_MINUTES
+    )
     db.add(
         ReviewEvent(
             payment_request_id=payment.id,
@@ -87,6 +112,7 @@ def reject_review(payment_id: int, payload: ReviewDecision, db: Session = Depend
         raise HTTPException(status_code=409, detail="Payment has already entered PayPal processing")
 
     payment.status = "REVIEW_REJECTED"
+    payment.limit_reservation_expires_at = None
     db.add(
         ReviewEvent(
             payment_request_id=payment.id,
