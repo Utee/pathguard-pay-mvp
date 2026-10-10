@@ -126,6 +126,8 @@ class AuditEvent(Base):
     metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
+    payment_request: Mapped[PaymentRequest] = relationship(back_populates="audit_events")
+
 
 class SpendingLimitSettings(Base):
     """Single-instance spending policy for the current local MVP (no user accounts yet)."""
