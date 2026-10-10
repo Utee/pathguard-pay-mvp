@@ -9,7 +9,10 @@ def assess_payment(db: Session, intent: PaymentIntent, raw_instruction: str) -> 
     previous = (
         db.execute(
             select(PaymentRequest)
-            .where(PaymentRequest.recipient_name.ilike(intent.recipient_name))
+            .where(
+                PaymentRequest.recipient_name.ilike(intent.recipient_name),
+                PaymentRequest.status == "COMPLETED",
+            )
             .order_by(PaymentRequest.created_at.desc())
         )
         .scalars()
