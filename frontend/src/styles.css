@@ -148,3 +148,15 @@ footer{width:min(1180px,88%);margin:auto;border-top:1px solid #ffffff0a;padding:
 .ai-priority-actions>div>span:last-child{min-width:0;display:flex;flex-direction:column;gap:3px}
 .ai-priority-actions b{font-size:10px;color:#dce5f3}
 .ai-priority-actions small{font-size:9px;line-height:1.5;color:#8d9db4}
+
+
+.notification-item{display:flex;align-items:flex-start;gap:10px;border-top:1px solid #ffffff0b;padding:12px 0}
+.notification-dot{width:8px;height:8px;flex:none;border-radius:50%;margin-top:5px;background:#8b9bb2}
+.notification-dot.high{background:#ff6b7d;box-shadow:0 0 0 4px #ff566b14}
+.notification-dot.medium{background:#f7c76d;box-shadow:0 0 0 4px #f7b94a14}
+.notification-dot.low{background:#5ce0ad;box-shadow:0 0 0 4px #31d69b12}
+.notification-content{min-width:0;flex:1}
+.notification-title-row{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+.notification-title-row>b{font-size:10px;line-height:1.5;color:#dce5f3}
+.notification-content>p{font-size:10px;line-height:1.5;color:#96a5ba;margin:5px 0}
+.notification-content>small{display:block;font-size:9px;line-height:1.5;color:#6f8098;overflow-wrap:anywhere}
