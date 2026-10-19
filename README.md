@@ -50,6 +50,8 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
+# Optional intelligence summaries through OpenRouter:
+# Set OPENROUTER_API_KEY in backend/.env and restart the API.
 python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
@@ -188,6 +190,10 @@ Return payment outcomes, completed spend, block counts, operational error counts
 ### GET `/api/intelligence/incidents`
 
 Detect repeated PayPal errors, stale checkouts, spending-limit block spikes, and unusual risk-block volumes from the audit trail. Detection compares the most recent 24 hours with the preceding six days and reports evidence counts plus suggested investigation steps. These signals are heuristic, not confirmed root causes, and cannot alter payment decisions.
+
+### GET `/api/intelligence/summary`
+
+Return an on-demand operational summary and priority actions. When `OPENROUTER_API_KEY` is set, the service uses the configured `OPENROUTER_MODEL`; otherwise, it supplies a deterministic rule-based summary. The AI prompt receives only aggregate metrics and sanitized incident signals, never raw payment instructions, recipient names, emails, or audit messages. AI output is explanatory only and does not change a payment's risk decision or limits.
 
 ### GET `/api/payments`
 
