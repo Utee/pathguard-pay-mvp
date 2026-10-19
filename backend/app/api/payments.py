@@ -722,7 +722,7 @@ def payment_audit(
     current_user: UserAccount = Depends(get_current_user),
 ):
     payment = db.get(PaymentRequest, payment_id)
-    if not payment:
+    if not payment or payment.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Payment request not found")
 
     return [
@@ -745,7 +745,7 @@ async def create_paypal_order(
     current_user: UserAccount = Depends(get_current_user),
 ):
     payment = db.get(PaymentRequest, payment_id)
-    if not payment:
+    if not payment or payment.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Payment request not found")
 
     _ensure_payment_can_use_paypal(payment)
