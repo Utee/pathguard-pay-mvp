@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     # ---------------------------------------------------------
 
     database_url: str = "sqlite:///./pathguard_pay.db"
+    jwt_secret_key: str | None = None
+    access_token_expire_minutes: int = 60
 
     # ---------------------------------------------------------
     # OpenAI
