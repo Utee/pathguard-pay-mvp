@@ -221,3 +221,32 @@ def test_openrouter_summary_uses_aggregate_only_context(monkeypatch):
     assert result["summary"] == "Two provider errors need investigation."
     assert result["disclaimer"]
     db.close()
+
+
+def test_notifications_are_scoped_to_customer_and_available_to_staff():
+    from app.services.incident_intelligence import build_notifications
+
+    db = make_db()
+    now = datetime.now(timezone.utc)
+    first = add_user(db, "notifications-first@example.com")
+    second = add_user(db, "notifications-second@example.com")
+    staff = add_user(db, "notifications-reviewer@example.com", role="reviewer")
+
+    first_payment = add_event(
+        db, first, "SPENDING_LIMIT_BLOCKED", now - timedelta(minutes=2),
+        metadata={"violations": ["Daily limit exceeded"]},
+    )
+    second_payment = add_event(
+        db, second, "PAYPAL_ERROR", now - timedelta(minutes=1),
+    )
+    db.commit()
+
+    first_feed = build_notifications(db, first, now=now)
+    staff_feed = build_notifications(db, staff, now=now)
+
+    assert len(first_feed) == 1
+    assert first_feed[0]["payment_id"] == first_payment.id
+    assert first_feed[0]["title"] == "Spending limit enforced"
+    assert len(staff_feed) == 2
+    assert {item["payment_id"] for item in staff_feed} == {first_payment.id, second_payment.id}
+    db.close()
