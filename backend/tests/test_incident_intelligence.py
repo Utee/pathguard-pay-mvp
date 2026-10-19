@@ -250,3 +250,28 @@ def test_notifications_are_scoped_to_customer_and_available_to_staff():
     assert len(staff_feed) == 2
     assert {item["payment_id"] for item in staff_feed} == {first_payment.id, second_payment.id}
     db.close()
+
+
+def test_routine_allow_events_do_not_hide_actionable_notifications():
+    from app.services.incident_intelligence import build_notifications
+
+    db = make_db()
+    now = datetime.now(timezone.utc)
+    user = add_user(db, "notification-priority@example.com")
+    for seconds in range(20):
+        add_event(
+            db, user, "RISK_ASSESSED",
+            now - timedelta(seconds=seconds + 1),
+            metadata={"decision": "ALLOW"},
+            status="ALLOW",
+        )
+    error_payment = add_event(
+        db, user, "PAYPAL_ERROR",
+        now - timedelta(minutes=10),
+    )
+    db.commit()
+
+    feed = build_notifications(db, user, now=now, limit=5)
+
+    assert any(item["payment_id"] == error_payment.id for item in feed)
+    db.close()
