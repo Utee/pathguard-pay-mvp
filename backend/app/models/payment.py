@@ -141,3 +141,4 @@ class SpendingLimitSettings(Base):
     per_transaction_limit: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     timezone: Mapped[str] = mapped_column(String(80), default="Africa/Lagos")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    user: Mapped["UserAccount | None"] = relationship(back_populates="spending_limit_settings")
