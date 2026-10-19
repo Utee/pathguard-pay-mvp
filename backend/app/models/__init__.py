@@ -16,4 +16,5 @@ __all__ = [
     "ReviewEvent",
     "RiskAssessment",
     "SpendingLimitSettings",
+    "UserAccount",
 ]
