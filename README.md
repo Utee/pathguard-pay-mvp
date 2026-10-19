@@ -50,7 +50,10 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
+python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
+
+Copy the generated value into `JWT_SECRET_KEY` in `backend/.env`. Do not use the example file's blank value or commit your real `.env` file. The backend refuses to issue or validate access tokens until the signing key is configured.
 
 Windows PowerShell:
 
@@ -67,6 +70,14 @@ Run the API:
 ```bash
 uvicorn app.main:app --reload
 ```
+
+Create your first user in the web app through the registration screen. New registrations receive the `customer` role. To create a staff account from the backend directory, use:
+
+```bash
+python scripts/create_user.py staff@example.com --name "PathGuard Reviewer" --role reviewer
+```
+
+Use `--role admin` for an administrator. The script prompts for the password. Staff can review queued payments; the acting reviewer identity is taken from their account, not from the submitted request body. Every customer's payments and spending-limit policy are scoped to their own account.
 
 Open:
 
@@ -152,15 +163,15 @@ PayPal credentials remain on the backend.
 
 ### POST `/api/payments/analyze`
 
-Analyze a natural-language payment instruction.
+Analyze a natural-language payment instruction for the authenticated user. All `/api/payments` routes require a bearer token except PayPal's return/cancel callbacks.
 
 ### GET `/api/limits/settings`
 
-Return the instance's current spending policy.
+Return the authenticated user's spending policy.
 
 ### PUT `/api/limits/settings`
 
-Update spending limits. Send `daily_limit`, `weekly_limit`, `monthly_limit`, optional `per_transaction_limit`, and an IANA `timezone`. Set a period's limit to `null` to disable that specific cap; at least one cap must remain enabled. Defaults are USD 1,000 daily, USD 10,000 weekly, and USD 10,000 monthly, with no separate per-transaction cap and `Africa/Lagos` period boundaries.
+Update the authenticated user's spending limits. Send `daily_limit`, `weekly_limit`, `monthly_limit`, optional `per_transaction_limit`, and an IANA `timezone`. Set a period's limit to `null` to disable that specific cap; at least one cap must remain enabled. Defaults are USD 1,000 daily, USD 10,000 weekly, and USD 10,000 monthly, with no separate per-transaction cap and `Africa/Lagos` period boundaries.
 
 ### GET `/api/limits/summary`
 
@@ -168,7 +179,7 @@ Return current-period spending plus active reservations, and remaining capacity 
 
 ### GET `/api/payments`
 
-Return recent locally stored payment requests.
+Return recent payment requests belonging to the authenticated user.
 
 ### GET `/api/payments/{payment_id}`
 
