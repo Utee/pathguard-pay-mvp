@@ -16,6 +16,10 @@ AI payment safety layer for PayPal Sandbox.
 10. Reserves capacity for eligible in-flight payments and re-checks limits before PayPal checkout/capture.
 11. Persists recent payment activity for the dashboard.
 12. Provides a React/Vite dashboard for analysis, spending-limit settings, human review, and PayPal checkout.
+13. Requires signed-in customer accounts for private payment history and per-account spending settings.
+14. Provides reviewer/admin roles for human review and organization-wide operational metrics.
+15. Detects recurring PayPal errors, stale checkouts, and spikes in policy/risk blocks from audit events.
+16. Offers on-demand OpenRouter summaries with a deterministic fallback and an in-app notification feed.
 
 > No real money is moved by this project. PayPal integration is intended for the Sandbox.
 
@@ -40,7 +44,8 @@ The long-term direction is to make PathGuard Pay a payment safety layer that can
 - Python 3.11+
 - Node.js 18+
 - Optional: PayPal Developer Sandbox app credentials
-- Optional: OpenAI API key
+- Optional: OpenAI API key for payment-intent extraction
+- Optional: OpenRouter API key for AI-generated incident summaries
 
 ## Backend setup
 
@@ -195,6 +200,10 @@ Detect repeated PayPal errors, stale checkouts, spending-limit block spikes, and
 
 Return an on-demand operational summary and priority actions. When `OPENROUTER_API_KEY` is set, the service uses the configured `OPENROUTER_MODEL`; otherwise, it supplies a deterministic rule-based summary. The AI prompt receives only aggregate metrics and sanitized incident signals, never raw payment instructions, recipient names, emails, or audit messages. AI output is explanatory only and does not change a payment's risk decision or limits.
 
+### GET `/api/intelligence/notifications`
+
+Return up to 50 recent, account-scoped in-app events from the audit trail, such as blocks, PayPal errors, stale checkouts, and completed payments. Reviewer/admin accounts see organization-wide events. Email and push delivery are not configured.
+
 ### GET `/api/payments`
 
 Return recent payment requests belonging to the authenticated user.
@@ -254,7 +263,7 @@ Handle a cancelled PayPal approval and redirect back to the frontend.
 - [x] PayPal Sandbox order creation
 - [x] Server-side PayPal capture
 - [ ] Remove previously committed `frontend/node_modules` from Git history/tree
-- [ ] Expand automated backend/API tests
+- [x] Expand automated backend/API tests
 
 ### Phase 2 — Payment safety workflow
 - [x] Persistent recipient history
@@ -266,9 +275,9 @@ Handle a cancelled PayPal approval and redirect back to the frontend.
 
 ### Phase 3 — Production readiness
 - [ ] PayPal webhook verification
-- [ ] Authentication and user accounts
-- [ ] PostgreSQL
-- [ ] Production CORS configuration
+- [x] Authentication and user accounts (MVP bearer-token implementation)
+- [ ] PostgreSQL migration and deployment validation
+- [x] Configurable CORS allowlist
 - [ ] Rate limiting
 - [ ] Structured logging and monitoring
 - [ ] Staging deployment
@@ -287,8 +296,11 @@ Handle a cancelled PayPal approval and redirect back to the frontend.
 - PayPal Client ID and Secret must stay server-side.
 - Do not treat an AI-generated payment intent as authoritative without deterministic validation.
 - Payments should only reach a payment rail after the PathGuard risk decision permits them; `REVIEW` payments also require an explicit human approval.
-- Spending caps are currently one shared policy per running MVP instance because user authentication/accounts are not implemented yet. Do not expose this dashboard or its API publicly until authentication and per-user authorization are added.
+- Access tokens are stored in browser localStorage for this MVP. Before production, consider Secure, HttpOnly, SameSite cookies or another reviewed session design, rate limits on authentication endpoints, password recovery, and server-side token revocation.
+- Existing payment rows that predate accounts are preserved with no owner assigned. They are not exposed to ordinary customer accounts automatically; explicitly reconcile/backfill historical ownership before migration to a live multi-user environment.
+- Spending-limit checks are re-evaluated during the payment lifecycle, but the current MVP does not use database-level locking for strict concurrent reservation accounting. Use PostgreSQL transactions/locking and load tests before production use.
+- The current reviewer role can inspect organization-wide operational aggregates and review queues. Provision staff roles only through the backend CLI and protect access to the deployment environment.
 - Spending limits are denominated in USD. Non-USD payments are blocked until currency-specific policies or reliable conversion rates are implemented.
 - A new eligible intent reserves budget for 30 minutes; an order placed with PayPal reserves budget for up to 24 hours. The server re-checks limits before capture, so an expired reservation does not by itself authorize payment.
 - Blocked, rejected, and cancelled attempts do not count as spending. Completed payments count at their capture timestamp.
-- The current review endpoints are unauthenticated and intended for local MVP/testing only. Add authentication and reviewer authorization before exposing them publicly.
+- The auth layer and staff role checks are implemented in this branch, but the changes still require review and merge before main or a deployment includes them. Do not treat this MVP as production-hardened.
