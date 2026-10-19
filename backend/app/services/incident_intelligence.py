@@ -320,3 +320,95 @@ def summarize_intelligence(db: Session, user: UserAccount) -> dict:
     except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError):
         result["provider_status"] = "unavailable"
     return result
+
+
+NOTIFICATION_EVENT_TYPES = {
+    "RISK_ASSESSED",
+    "SPENDING_LIMIT_BLOCKED",
+    "PAYPAL_ERROR",
+    "PAYPAL_ORDER_STALE",
+    "PAYMENT_COMPLETED",
+    "PAYPAL_CHECKOUT_CANCELLED",
+    "PAYPAL_ORDER_CREATED",
+}
+
+
+def build_notifications(
+    db: Session,
+    user: UserAccount,
+    *,
+    now: datetime | None = None,
+    limit: int = 15,
+) -> list[dict]:
+    now = _as_utc(now or datetime.now(timezone.utc))
+    assert now is not None
+    since = now - timedelta(days=7)
+    statement = (
+        select(AuditEvent, PaymentRequest)
+        .join(PaymentRequest, PaymentRequest.id == AuditEvent.payment_request_id)
+        .where(
+            AuditEvent.created_at >= since,
+            AuditEvent.event_type.in_(NOTIFICATION_EVENT_TYPES),
+        )
+        .order_by(AuditEvent.created_at.desc())
+        .limit(max(1, min(limit, 50)))
+    )
+    if user.role not in STAFF_ROLES:
+        statement = statement.where(PaymentRequest.user_id == user.id)
+
+    notifications = []
+    for event, payment in db.execute(statement).all():
+        metadata = event.metadata if isinstance(event.metadata, dict) else {}
+        decision = str(metadata.get("decision", "")).upper()
+
+        if event.event_type == "RISK_ASSESSED":
+            if decision == "ALLOW":
+                continue
+            if decision == "BLOCK":
+                title = "Payment blocked by risk checks"
+                severity = "high"
+                message = "The deterministic risk engine blocked this payment. Review its recorded risk reasons."
+            elif decision == "REVIEW":
+                title = "Payment queued for human review"
+                severity = "medium"
+                message = "The payment needs a staff decision before it can continue to PayPal."
+            else:
+                continue
+        elif event.event_type == "SPENDING_LIMIT_BLOCKED":
+            title = "Spending limit enforced"
+            severity = "medium"
+            message = "The payment was blocked because a configured spending cap would be exceeded."
+        elif event.event_type == "PAYPAL_ERROR":
+            title = "PayPal processing error"
+            severity = "high"
+            message = "PayPal processing reported an error. Check provider status before retrying."
+        elif event.event_type == "PAYPAL_ORDER_STALE":
+            title = "PayPal checkout needs refreshing"
+            severity = "medium"
+            message = "The saved PayPal order was not found; a fresh checkout may be required."
+        elif event.event_type == "PAYMENT_COMPLETED":
+            title = "Payment completed"
+            severity = "low"
+            message = "PathGuard recorded the payment as completed."
+        elif event.event_type == "PAYPAL_CHECKOUT_CANCELLED":
+            title = "PayPal checkout cancelled"
+            severity = "low"
+            message = "The checkout was cancelled and the local spending reservation was released."
+        else:
+            title = "PayPal checkout created"
+            severity = "low"
+            message = "A PayPal checkout order was created and is waiting for buyer approval."
+
+        notifications.append({
+            "id": event.id,
+            "payment_id": payment.id,
+            "event_type": event.event_type,
+            "title": title,
+            "severity": severity,
+            "message": message,
+            "recipient": payment.recipient_name,
+            "amount": float(payment.amount),
+            "currency": payment.currency,
+            "created_at": _event_time(event.created_at),
+        })
+    return notifications
