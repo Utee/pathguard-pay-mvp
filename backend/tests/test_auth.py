@@ -59,6 +59,8 @@ def register(client, email):
 def test_authentication_required_for_payment_and_limit_apis(client):
     assert client.get("/api/payments").status_code == 401
     assert client.get("/api/limits/settings").status_code == 401
+    assert client.get("/api/intelligence/overview").status_code == 401
+    assert client.get("/api/intelligence/incidents").status_code == 401
 
 
 def test_register_login_and_current_account(client):
@@ -152,5 +154,10 @@ def test_payment_history_and_details_are_private_to_the_owner(client):
 
     assert [item["id"] for item in first_history] == [first_id]
     assert [item["id"] for item in second_history] == [second_id]
+    first_metrics = client.get("/api/intelligence/overview", headers=first_headers).json()
+    second_metrics = client.get("/api/intelligence/overview", headers=second_headers).json()
+    assert first_metrics["scope"] == "account"
+    assert first_metrics["total_payments"] == 1
+    assert second_metrics["total_payments"] == 1
     assert client.get(f"/api/payments/{first_id}", headers=second_headers).status_code == 404
     assert client.get(f"/api/payments/{second_id}", headers=first_headers).status_code == 404
