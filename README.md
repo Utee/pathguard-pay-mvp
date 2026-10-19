@@ -204,6 +204,10 @@ Return an on-demand operational summary and priority actions. When `OPENROUTER_A
 
 Return up to 50 recent, account-scoped in-app events from the audit trail, such as blocks, PayPal errors, stale checkouts, and completed payments. Reviewer/admin accounts see organization-wide events. Email and push delivery are not configured.
 
+### GET `/api/intelligence/notifications`
+
+Return up to 50 recent account-scoped in-app payment events from the audit trail. Events include risk blocks, human-review requests, spending-limit enforcement, PayPal failures, stale checkouts, cancellations, and completed payments. Reviewer/admin accounts can view organization-wide events. Email or push delivery is not configured.
+
 ### GET `/api/payments`
 
 Return recent payment requests belonging to the authenticated user.
