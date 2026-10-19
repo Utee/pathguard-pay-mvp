@@ -1,13 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
+from app.core.security import get_current_user
 from app.db import get_db
-from app.models import SpendingLimitSettings
-from app.schemas.payment import (
-    SpendingLimitsSettingsResponse,
-    SpendingLimitsSummaryResponse,
-    SpendingLimitsUpdate,
-)
+from app.models import SpendingLimitSettings, UserAccount
+from app.schemas.payment import SpendingLimitsSettingsResponse, SpendingLimitsSummaryResponse, SpendingLimitsUpdate
 from app.services.spending_limits import calculate_usage, get_or_create_settings
 
 router = APIRouter(prefix="/api/limits", tags=["spending-limits"])
@@ -25,8 +22,11 @@ def _settings_response(policy: SpendingLimitSettings) -> SpendingLimitsSettingsR
 
 
 @router.get("/settings", response_model=SpendingLimitsSettingsResponse)
-def read_spending_limit_settings(db: Session = Depends(get_db)):
-    policy = get_or_create_settings(db)
+def read_spending_limit_settings(
+    db: Session = Depends(get_db),
+    current_user: UserAccount = Depends(get_current_user),
+):
+    policy = get_or_create_settings(db, user_id=current_user.id)
     db.commit()
     return _settings_response(policy)
 
@@ -35,8 +35,9 @@ def read_spending_limit_settings(db: Session = Depends(get_db)):
 def update_spending_limit_settings(
     payload: SpendingLimitsUpdate,
     db: Session = Depends(get_db),
+    current_user: UserAccount = Depends(get_current_user),
 ):
-    policy = get_or_create_settings(db)
+    policy = get_or_create_settings(db, user_id=current_user.id)
     policy.daily_limit = payload.daily_limit
     policy.weekly_limit = payload.weekly_limit
     policy.monthly_limit = payload.monthly_limit
@@ -48,9 +49,12 @@ def update_spending_limit_settings(
 
 
 @router.get("/summary", response_model=SpendingLimitsSummaryResponse)
-def spending_limit_summary(db: Session = Depends(get_db)):
-    policy = get_or_create_settings(db)
-    usage = calculate_usage(db, policy)
+def spending_limit_summary(
+    db: Session = Depends(get_db),
+    current_user: UserAccount = Depends(get_current_user),
+):
+    policy = get_or_create_settings(db, user_id=current_user.id)
+    usage = calculate_usage(db, policy, user_id=current_user.id)
 
     def remaining(limit, used):
         return None if limit is None else max(0.0, float(limit) - float(used))
