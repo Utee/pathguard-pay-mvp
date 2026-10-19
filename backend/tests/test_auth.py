@@ -124,3 +124,33 @@ def test_expired_or_invalid_tokens_are_rejected(client):
         headers={"Authorization": "Bearer not-a-valid-token"},
     )
     assert response.status_code == 401
+
+
+def test_payment_history_and_details_are_private_to_the_owner(client):
+    first = register(client, "owner@example.com")
+    second = register(client, "other@example.com")
+    first_headers = {"Authorization": f"Bearer {first['access_token']}"}
+    second_headers = {"Authorization": f"Bearer {second['access_token']}"}
+
+    first_analysis = client.post(
+        "/api/payments/analyze",
+        headers=first_headers,
+        json={"instruction": "Pay Alice $100 for groceries"},
+    )
+    second_analysis = client.post(
+        "/api/payments/analyze",
+        headers=second_headers,
+        json={"instruction": "Pay Bob $75 for utilities"},
+    )
+    assert first_analysis.status_code == 200
+    assert second_analysis.status_code == 200
+
+    first_id = first_analysis.json()["payment_id"]
+    second_id = second_analysis.json()["payment_id"]
+    first_history = client.get("/api/payments", headers=first_headers).json()
+    second_history = client.get("/api/payments", headers=second_headers).json()
+
+    assert [item["id"] for item in first_history] == [first_id]
+    assert [item["id"] for item in second_history] == [second_id]
+    assert client.get(f"/api/payments/{first_id}", headers=second_headers).status_code == 404
+    assert client.get(f"/api/payments/{second_id}", headers=first_headers).status_code == 404
