@@ -61,6 +61,8 @@ def approve_review(
     payment = db.get(PaymentRequest, payment_id)
     if not payment:
         raise HTTPException(status_code=404, detail="Payment request not found")
+    if payment.user_id == current_user.id:
+        raise HTTPException(status_code=403, detail="A staff member cannot review their own payment.")
     if not payment.risk or payment.risk.decision != "REVIEW":
         raise HTTPException(status_code=409, detail="Only REVIEW payments can be approved")
     if payment.status == "REVIEW_REJECTED":
@@ -117,6 +119,8 @@ def reject_review(
     payment = db.get(PaymentRequest, payment_id)
     if not payment:
         raise HTTPException(status_code=404, detail="Payment request not found")
+    if payment.user_id == current_user.id:
+        raise HTTPException(status_code=403, detail="A staff member cannot review their own payment.")
     if not payment.risk or payment.risk.decision != "REVIEW":
         raise HTTPException(status_code=409, detail="Only REVIEW payments can be rejected")
     if payment.status == "REVIEW_APPROVED":
