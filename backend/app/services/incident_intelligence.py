@@ -351,7 +351,7 @@ def build_notifications(
             AuditEvent.event_type.in_(NOTIFICATION_EVENT_TYPES),
         )
         .order_by(AuditEvent.created_at.desc())
-        .limit(max(1, min(limit, 50)))
+        .limit(max(50, min(limit * 5, 250)))
     )
     if user.role not in STAFF_ROLES:
         statement = statement.where(PaymentRequest.user_id == user.id)
@@ -411,4 +411,4 @@ def build_notifications(
             "currency": payment.currency,
             "created_at": _event_time(event.created_at),
         })
-    return notifications
+    return notifications[:max(1, min(limit, 50))]
