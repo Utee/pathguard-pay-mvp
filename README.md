@@ -181,6 +181,14 @@ Update the authenticated user's spending limits. Send `daily_limit`, `weekly_lim
 
 Return current-period spending plus active reservations, and remaining capacity for each configured limit.
 
+### GET `/api/intelligence/overview`
+
+Return payment outcomes, completed spend, block counts, operational error counts, and success rate. Customer accounts receive their own metrics; reviewer/admin accounts receive organization-wide aggregates.
+
+### GET `/api/intelligence/incidents`
+
+Detect repeated PayPal errors, stale checkouts, spending-limit block spikes, and unusual risk-block volumes from the audit trail. Detection compares the most recent 24 hours with the preceding six days and reports evidence counts plus suggested investigation steps. These signals are heuristic, not confirmed root causes, and cannot alter payment decisions.
+
 ### GET `/api/payments`
 
 Return recent payment requests belonging to the authenticated user.
