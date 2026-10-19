@@ -74,6 +74,9 @@ function App() {
   const [paypalResult, setPaypalResult] = useState(null);
   const [intelligenceOverview, setIntelligenceOverview] = useState(null);
   const [incidents, setIncidents] = useState([]);
+  const [intelligenceSummary, setIntelligenceSummary] = useState(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryError, setSummaryError] = useState('');
   const [limitDraft, setLimitDraft] = useState({
     daily_limit: 1000,
     weekly_limit: 10000,
@@ -327,6 +330,8 @@ function App() {
     setReviewQueue([]);
     setIntelligenceOverview(null);
     setIncidents([]);
+    setIntelligenceSummary(null);
+    setSummaryError('');
     setLimitsInitialized(false);
     setLimitSummary(null);
   }
@@ -411,6 +416,21 @@ function App() {
       setLimitsError(e.message || 'Could not save spending limits');
     } finally {
       setLimitsSaving(false);
+    }
+  }
+
+  async function generateSummary() {
+    setSummaryLoading(true);
+    setSummaryError('');
+    try {
+      const response = await apiFetch(`${API}/api/intelligence/summary`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Could not generate the intelligence summary.');
+      setIntelligenceSummary(data);
+    } catch (error) {
+      setSummaryError(error.message || 'Could not generate the intelligence summary.');
+    } finally {
+      setSummaryLoading(false);
     }
   }
 
@@ -748,6 +768,33 @@ function App() {
                 </div>
               </>
             ) : <p className="muted">Intelligence metrics are loading.</p>}
+            <div className="ai-summary-controls">
+              <button className="ai-summary-button" onClick={generateSummary} disabled={summaryLoading}>
+                {summaryLoading ? <><Loader2 className="spin" /> Generating summary…</> : <><Activity /> Generate AI investigation summary</>}
+              </button>
+              {summaryError && <div className="error limits-feedback">{summaryError}</div>}
+            </div>
+            {intelligenceSummary && (
+              <div className="ai-summary-block">
+                <div className="ai-summary-heading">
+                  <b>Investigation summary</b>
+                  <span>{intelligenceSummary.source === 'openrouter' ? 'OpenRouter AI' : 'Rule-based fallback'}</span>
+                </div>
+                <p>{intelligenceSummary.summary}</p>
+                {intelligenceSummary.priority_actions?.length > 0 && (
+                  <div className="ai-priority-actions">
+                    <strong>Priority actions</strong>
+                    {intelligenceSummary.priority_actions.map((action) => (
+                      <div key={action.title}>
+                        <span className={`incident-severity ${action.severity}`}>{action.severity}</span>
+                        <span><b>{action.title}</b><small>{action.action}</small></span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <small className="limits-footnote">{intelligenceSummary.disclaimer}</small>
+              </div>
+            )}
             <div className="incident-heading">
               <b><AlertTriangle /> Recent incident signals</b>
               <span>{incidents.length}</span>
