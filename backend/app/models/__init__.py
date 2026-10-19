@@ -1,3 +1,4 @@
+from app.models.user import UserAccount
 from app.models.payment import (
     AuditEvent,
     PaymentRequest,
