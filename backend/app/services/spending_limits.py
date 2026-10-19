@@ -11,9 +11,6 @@ LIMIT_CURRENCY = "USD"
 ANALYSIS_RESERVATION_MINUTES = 30
 PAYPAL_RESERVATION_HOURS = 24
 
-# Completed payments count as actual spend. Eligible in-flight payments count
-# only while their explicit reservation is active. Blocked/rejected/cancelled
-# attempts never contribute to the spend baseline.
 RESERVABLE_STATUSES = {
     "ALLOW",
     "REVIEW_PENDING",
@@ -33,17 +30,41 @@ def as_utc(value: datetime | None) -> datetime | None:
     if value is None:
         return None
     if value.tzinfo is None:
-        # SQLite removes timezone metadata from DateTime columns; values are
-        # written in UTC throughout this MVP.
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
 
 
-def get_or_create_settings(db: Session) -> SpendingLimitSettings:
+def get_or_create_settings(
+    db: Session,
+    user_id: int | None = None,
+) -> SpendingLimitSettings:
+    if user_id is not None:
+        policy = db.execute(
+            select(SpendingLimitSettings).where(SpendingLimitSettings.user_id == user_id)
+        ).scalar_one_or_none()
+        if policy is not None:
+            return policy
+        policy = SpendingLimitSettings(
+            user_id=user_id,
+            daily_limit=1000.0,
+            weekly_limit=10000.0,
+            monthly_limit=10000.0,
+            per_transaction_limit=None,
+            timezone="Africa/Lagos",
+        )
+        db.add(policy)
+        db.flush()
+        return policy
+
     policy = db.get(SpendingLimitSettings, 1)
+    if policy is None:
+        policy = db.execute(
+            select(SpendingLimitSettings).where(SpendingLimitSettings.user_id.is_(None))
+        ).scalar_one_or_none()
     if policy is None:
         policy = SpendingLimitSettings(
             id=1,
+            user_id=None,
             daily_limit=1000.0,
             weekly_limit=10000.0,
             monthly_limit=10000.0,
@@ -62,7 +83,7 @@ def _period_starts(now: datetime, timezone_name: str) -> dict[str, datetime]:
         raise ValueError(f"Unknown timezone: {timezone_name}") from exc
 
     day_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
-    week_start = (day_start - timedelta(days=local_now.weekday()))
+    week_start = day_start - timedelta(days=local_now.weekday())
     month_start = day_start.replace(day=1)
     return {
         "daily": day_start.astimezone(timezone.utc),
@@ -77,20 +98,22 @@ def calculate_usage(
     *,
     now: datetime | None = None,
     exclude_payment_id: int | None = None,
+    user_id: int | None = None,
 ) -> dict:
-    """Return current-period completed spend plus active reservation amounts."""
-    policy = policy or get_or_create_settings(db)
+    policy = policy or get_or_create_settings(db, user_id=user_id)
+    if user_id is None and policy.user_id is not None:
+        user_id = policy.user_id
     now = as_utc(now or utc_now())
     assert now is not None
     starts = _period_starts(now, policy.timezone)
 
-    payments = db.execute(
-        select(PaymentRequest)
-        .where(
-            PaymentRequest.currency == LIMIT_CURRENCY,
-            PaymentRequest.status.in_(COUNTED_STATUSES),
-        )
-    ).scalars().unique().all()
+    statement = select(PaymentRequest).where(
+        PaymentRequest.currency == LIMIT_CURRENCY,
+        PaymentRequest.status.in_(COUNTED_STATUSES),
+    )
+    if user_id is not None:
+        statement = statement.where(PaymentRequest.user_id == user_id)
+    payments = db.execute(statement).scalars().unique().all()
 
     usage = {"daily": 0.0, "weekly": 0.0, "monthly": 0.0}
     reserved_amount = 0.0
@@ -114,8 +137,6 @@ def calculate_usage(
 
         expiry = as_utc(payment.limit_reservation_expires_at)
         if payment.status in RESERVABLE_STATUSES and expiry and expiry > now:
-            # A live reservation consumes capacity in each current period even
-            # if the request was originally analyzed before a period boundary.
             for period in usage:
                 usage[period] += amount
             reserved_amount += amount
@@ -133,8 +154,11 @@ def check_spending_limits(
     policy: SpendingLimitSettings | None = None,
     now: datetime | None = None,
     exclude_payment_id: int | None = None,
+    user_id: int | None = None,
 ) -> tuple[list[str], dict]:
-    policy = policy or get_or_create_settings(db)
+    policy = policy or get_or_create_settings(db, user_id=user_id)
+    if user_id is None and policy.user_id is not None:
+        user_id = policy.user_id
     now = as_utc(now or utc_now())
     assert now is not None
     usage = calculate_usage(
@@ -142,6 +166,7 @@ def check_spending_limits(
         policy,
         now=now,
         exclude_payment_id=exclude_payment_id,
+        user_id=user_id,
     )
     violations: list[str] = []
 
@@ -191,14 +216,16 @@ def apply_spending_policy(
     risk: RiskResult,
     *,
     now: datetime | None = None,
+    user_id: int | None = None,
 ) -> tuple[RiskResult, list[str]]:
-    policy = get_or_create_settings(db)
+    policy = get_or_create_settings(db, user_id=user_id)
     violations, _ = check_spending_limits(
         db,
         amount=float(intent.amount),
         currency=intent.currency,
         policy=policy,
         now=now,
+        user_id=user_id,
     )
     if not violations:
         return risk, []
@@ -221,7 +248,8 @@ def payment_limit_violations(
     *,
     now: datetime | None = None,
 ) -> list[str]:
-    policy = get_or_create_settings(db)
+    user_id = payment.user_id
+    policy = get_or_create_settings(db, user_id=user_id)
     violations, _ = check_spending_limits(
         db,
         amount=float(payment.amount),
@@ -229,5 +257,6 @@ def payment_limit_violations(
         policy=policy,
         now=now,
         exclude_payment_id=payment.id,
+        user_id=user_id,
     )
     return violations
