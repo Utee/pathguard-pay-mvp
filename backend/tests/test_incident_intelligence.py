@@ -142,3 +142,82 @@ def test_overview_counts_completed_spend_and_operational_outcomes():
     assert overview["paypal_errors"] == 1
     assert overview["success_rate_percent"] == 50
     db.close()
+
+
+def test_summary_uses_rules_when_openrouter_is_not_configured(monkeypatch):
+    from types import SimpleNamespace
+    import app.services.incident_intelligence as intelligence
+
+    db = make_db()
+    user = add_user(db, "summary@example.com")
+    add_event(
+        db, user, "PAYPAL_ERROR",
+        datetime.now(timezone.utc) - timedelta(minutes=3),
+    )
+    add_event(
+        db, user, "PAYPAL_ERROR",
+        datetime.now(timezone.utc) - timedelta(minutes=2),
+    )
+    db.commit()
+    monkeypatch.setattr(
+        intelligence, "get_settings",
+        lambda: SimpleNamespace(openrouter_api_key=None, openrouter_model="unused"),
+    )
+
+    result = intelligence.summarize_intelligence(db, user)
+
+    assert result["source"] == "rules"
+    assert "incident signal group" in result["summary"]
+    assert result["priority_actions"][0]["title"] == "Repeated PayPal processing errors"
+    db.close()
+
+
+def test_openrouter_summary_uses_aggregate_only_context(monkeypatch):
+    from types import SimpleNamespace
+    import app.services.incident_intelligence as intelligence
+
+    db = make_db()
+    user = add_user(db, "private-customer@example.com")
+    add_event(
+        db, user, "PAYPAL_ERROR",
+        datetime.now(timezone.utc) - timedelta(minutes=3),
+        amount=735,
+    )
+    add_event(
+        db, user, "PAYPAL_ERROR",
+        datetime.now(timezone.utc) - timedelta(minutes=2),
+        amount=735,
+    )
+    db.commit()
+    monkeypatch.setattr(
+        intelligence, "get_settings",
+        lambda: SimpleNamespace(
+            openrouter_api_key="test-only-key",
+            openrouter_model="test/model",
+        ),
+    )
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": "Two provider errors need investigation."}}]}
+
+    def fake_post(url, headers, json, timeout):
+        assert url == "https://openrouter.ai/api/v1/chat/completions"
+        assert json["model"] == "test/model"
+        assert "private-customer@example.com" not in json["messages"][1]["content"]
+        assert "Test payment" not in json["messages"][1]["content"]
+        assert '"completed_spend_usd"' in json["messages"][1]["content"] or '"metrics"' in json["messages"][1]["content"]
+        assert timeout == 8.0
+        return FakeResponse()
+
+    monkeypatch.setattr(intelligence.httpx, "post", fake_post)
+
+    result = intelligence.summarize_intelligence(db, user)
+
+    assert result["source"] == "openrouter"
+    assert result["summary"] == "Two provider errors need investigation."
+    assert result["disclaimer"]
+    db.close()
