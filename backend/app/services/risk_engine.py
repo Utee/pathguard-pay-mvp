@@ -5,19 +5,19 @@ from app.models import PaymentRequest
 from app.schemas.payment import PaymentIntent, RiskResult
 
 
-def assess_payment(db: Session, intent: PaymentIntent, raw_instruction: str) -> RiskResult:
-    previous = (
-        db.execute(
-            select(PaymentRequest)
-            .where(
-                PaymentRequest.recipient_name.ilike(intent.recipient_name),
-                PaymentRequest.status == "COMPLETED",
-            )
-            .order_by(PaymentRequest.created_at.desc())
-        )
-        .scalars()
-        .all()
+def assess_payment(
+    db: Session,
+    intent: PaymentIntent,
+    raw_instruction: str,
+    user_id: int | None = None,
+) -> RiskResult:
+    query = select(PaymentRequest).where(
+        PaymentRequest.recipient_name.ilike(intent.recipient_name),
+        PaymentRequest.status == "COMPLETED",
     )
+    if user_id is not None:
+        query = query.where(PaymentRequest.user_id == user_id)
+    previous = db.execute(query.order_by(PaymentRequest.created_at.desc())).scalars().all()
 
     score = 0
     reasons = []

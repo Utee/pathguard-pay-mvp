@@ -12,11 +12,22 @@ import {
   XCircle,
   Settings2,
   Save,
+  Activity,
+  AlertTriangle,
+  TrendingUp,
+  CircleDollarSign,
 } from 'lucide-react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 
 const API = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+
+function apiFetch(input, options = {}) {
+  const headers = { ...(options.headers || {}) };
+  const token = localStorage.getItem('pathguard_access_token');
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return fetch(input, { ...options, headers });
+}
 
 const STATUS_LABELS = {
   ALLOW: 'Approved',
@@ -43,6 +54,15 @@ function statusMeta(status) {
 }
 
 function App() {
+  const [token, setToken] = useState(() => localStorage.getItem('pathguard_access_token'));
+  const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authMode, setAuthMode] = useState('login');
+  const [authEmail, setAuthEmail] = useState('');
+  const [authName, setAuthName] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState('');
   const [instruction, setInstruction] = useState('');
   const [payment, setPayment] = useState(null);
   const [history, setHistory] = useState([]);
@@ -52,6 +72,12 @@ function App() {
   const [payLoading, setPayLoading] = useState(false);
   const [error, setError] = useState('');
   const [paypalResult, setPaypalResult] = useState(null);
+  const [intelligenceOverview, setIntelligenceOverview] = useState(null);
+  const [incidents, setIncidents] = useState([]);
+  const [notifications, setNotifications] = useState([]);
+  const [intelligenceSummary, setIntelligenceSummary] = useState(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryError, setSummaryError] = useState('');
   const [limitDraft, setLimitDraft] = useState({
     daily_limit: 1000,
     weekly_limit: 10000,
@@ -65,15 +91,19 @@ function App() {
   const [limitsError, setLimitsError] = useState('');
   const [limitsSaved, setLimitsSaved] = useState('');
 
-  async function load() {
+  async function load(account = user) {
     try {
-      const r = await fetch(`${API}/api/payments`);
+      const r = await apiFetch(`${API}/api/payments`);
       if (r.ok) setHistory(await r.json());
 
-      const reviews = await fetch(`${API}/api/reviews`);
-      if (reviews.ok) setReviewQueue(await reviews.json());
+      if (account && ['reviewer', 'admin'].includes(account.role)) {
+        const reviews = await apiFetch(`${API}/api/reviews`);
+        if (reviews.ok) setReviewQueue(await reviews.json());
+      } else {
+        setReviewQueue([]);
+      }
 
-      const configuredLimits = await fetch(`${API}/api/limits/settings`);
+      const configuredLimits = await apiFetch(`${API}/api/limits/settings`);
       if (configuredLimits.ok && !limitsInitialized) {
         const d = await configuredLimits.json();
         setLimitDraft({
@@ -86,8 +116,23 @@ function App() {
         setLimitsInitialized(true);
       }
 
-      const usage = await fetch(`${API}/api/limits/summary`);
+      const usage = await apiFetch(`${API}/api/limits/summary`);
       if (usage.ok) setLimitSummary(await usage.json());
+
+      const overview = await apiFetch(`${API}/api/intelligence/overview`);
+      if (overview.ok) setIntelligenceOverview(await overview.json());
+
+      const incidentResponse = await apiFetch(`${API}/api/intelligence/incidents`);
+      if (incidentResponse.ok) {
+        const data = await incidentResponse.json();
+        setIncidents(data.incidents || []);
+      }
+
+      const notificationResponse = await apiFetch(`${API}/api/intelligence/notifications?limit=15`);
+      if (notificationResponse.ok) {
+        const data = await notificationResponse.json();
+        setNotifications(data.notifications || []);
+      }
     } catch {
       // Keep the dashboard usable if history is temporarily unavailable.
     }
@@ -97,7 +142,7 @@ function App() {
     if (!paymentId) return;
 
     try {
-      const r = await fetch(`${API}/api/payments/${paymentId}`);
+      const r = await apiFetch(`${API}/api/payments/${paymentId}`);
       const d = await r.json();
 
       if (r.ok && d?.id) {
@@ -120,7 +165,37 @@ function App() {
   }
 
   useEffect(() => {
-    load();
+    let active = true;
+    async function initialize() {
+      if (!token) {
+        setUser(null);
+        setAuthLoading(false);
+        return;
+      }
+
+      setAuthLoading(true);
+      try {
+        const accountResponse = await apiFetch(`${API}/api/auth/me`);
+        if (!active) return;
+        if (!accountResponse.ok) {
+          localStorage.removeItem('pathguard_access_token');
+          setToken(null);
+          setUser(null);
+          setAuthLoading(false);
+          return;
+        }
+        const account = await accountResponse.json();
+        if (!active) return;
+        setUser(account);
+        setAuthLoading(false);
+        load(account);
+      } catch {
+        if (active) {
+          setAuthLoading(false);
+          setAuthError('Could not connect to PathGuard Pay. Check that the backend is running.');
+        }
+        return;
+      }
 
     const q = new URLSearchParams(window.location.search);
     const paypalState = q.get('paypal');
@@ -138,7 +213,7 @@ function App() {
       if (!token) return null;
 
       try {
-        const r = await fetch(
+        const r = await apiFetch(
           `${API}/api/payments/paypal/sync?token=${encodeURIComponent(token)}`,
           { method: 'POST' }
         );
@@ -171,7 +246,7 @@ function App() {
       if (paypalToken) {
         synced = await syncReturnedPayment(paypalToken);
       } else if (effectivePaymentId) {
-        const current = await fetch(`${API}/api/payments/${effectivePaymentId}`);
+        const current = await apiFetch(`${API}/api/payments/${effectivePaymentId}`);
         if (current.ok) {
           const d = await current.json();
           const token = d?.paypal?.order_id;
@@ -204,21 +279,77 @@ function App() {
         });
       }
 
-      load();
+      load(account);
       localStorage.removeItem('pathguard_paypal_payment_id');
     }
 
     restoreAfterPayPalReturn();
 
     window.history.replaceState({}, '', window.location.pathname);
-  }, []);
+    }
+
+    initialize();
+    return () => { active = false; };
+  }, [token]);
+
+  async function submitAuth(event) {
+    event.preventDefault();
+    setAuthBusy(true);
+    setAuthError('');
+    try {
+      const endpoint = authMode === 'register' ? '/api/auth/register' : '/api/auth/login';
+      const payload = authMode === 'register'
+        ? { email: authEmail, display_name: authName, password: authPassword }
+        : { email: authEmail, password: authPassword };
+      const response = await fetch(`${API}${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        const detail = typeof data.detail === 'string'
+          ? data.detail
+          : Array.isArray(data.detail)
+            ? data.detail.map((item) => item.msg).join('; ')
+            : 'Authentication failed.';
+        throw new Error(detail);
+      }
+      localStorage.setItem('pathguard_access_token', data.access_token);
+      setUser(data.user);
+      setToken(data.access_token);
+      setAuthPassword('');
+      setAuthError('');
+    } catch (error) {
+      setAuthError(error.message || 'Authentication failed.');
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  function signOut() {
+    localStorage.removeItem('pathguard_access_token');
+    localStorage.removeItem('pathguard_paypal_payment_id');
+    setToken(null);
+    setUser(null);
+    setPayment(null);
+    setHistory([]);
+    setReviewQueue([]);
+    setIntelligenceOverview(null);
+    setIncidents([]);
+    setNotifications([]);
+    setIntelligenceSummary(null);
+    setSummaryError('');
+    setLimitsInitialized(false);
+    setLimitSummary(null);
+  }
 
   async function decideReview(item, action) {
     setReviewLoading(true);
     setError('');
 
     try {
-      const r = await fetch(`${API}/api/reviews/${item.id}/${action}`, {
+      const r = await apiFetch(`${API}/api/reviews/${item.id}/${action}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -270,7 +401,7 @@ function App() {
     }
 
     try {
-      const r = await fetch(`${API}/api/limits/settings`, {
+      const r = await apiFetch(`${API}/api/limits/settings`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -287,12 +418,27 @@ function App() {
 
       setLimitDraft(d);
       setLimitsSaved('Spending limits saved. New and pending payments will be checked against these settings.');
-      const summaryResponse = await fetch(`${API}/api/limits/summary`);
+      const summaryResponse = await apiFetch(`${API}/api/limits/summary`);
       if (summaryResponse.ok) setLimitSummary(await summaryResponse.json());
     } catch (e) {
       setLimitsError(e.message || 'Could not save spending limits');
     } finally {
       setLimitsSaving(false);
+    }
+  }
+
+  async function generateSummary() {
+    setSummaryLoading(true);
+    setSummaryError('');
+    try {
+      const response = await apiFetch(`${API}/api/intelligence/summary`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Could not generate the intelligence summary.');
+      setIntelligenceSummary(data);
+    } catch (error) {
+      setSummaryError(error.message || 'Could not generate the intelligence summary.');
+    } finally {
+      setSummaryLoading(false);
     }
   }
 
@@ -305,7 +451,7 @@ function App() {
     setPayment(null);
 
     try {
-      const r = await fetch(`${API}/api/payments/analyze`, {
+      const r = await apiFetch(`${API}/api/payments/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ instruction }),
@@ -335,7 +481,7 @@ function App() {
     setError('');
 
     try {
-      const r = await fetch(
+      const r = await apiFetch(
         `${API}/api/payments/${payment.payment_id}/paypal/create`,
         { method: 'POST' }
       );
@@ -370,6 +516,55 @@ function App() {
   const decision = risk?.decision;
   const currentStatus = payment?.status || decision;
 
+  if (authLoading) {
+    return (
+      <div className="auth-shell">
+        <div className="auth-card">
+          <div className="logo"><ShieldCheck /></div>
+          <h1>PathGuard Pay</h1>
+          <p>Verifying your secure session…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="auth-shell">
+        <form className="auth-card" onSubmit={submitAuth}>
+          <div className="logo"><ShieldCheck /></div>
+          <div className="eyebrow">PATHGUARD PAY</div>
+          <h1>{authMode === 'register' ? 'Create your account' : 'Welcome back'}</h1>
+          <p>{authMode === 'register'
+            ? 'Your payments and spending limits are private to your account.'
+            : 'Sign in to review payment risk and manage your personal spending limits.'}</p>
+          {authMode === 'register' && (
+            <label className="auth-field">Display name
+              <input autoComplete="name" required maxLength={120} value={authName} onChange={(event) => setAuthName(event.target.value)} />
+            </label>
+          )}
+          <label className="auth-field">Email
+            <input type="email" autoComplete="email" required value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} />
+          </label>
+          <label className="auth-field">Password
+            <input type="password" autoComplete={authMode === 'register' ? 'new-password' : 'current-password'} minLength={authMode === 'register' ? 12 : 1} required value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} />
+          </label>
+          {authMode === 'register' && <small className="auth-note">Use at least 12 characters. Staff roles are assigned separately by an administrator.</small>}
+          {authError && <div className="error">{authError}</div>}
+          <button className="primary auth-submit" type="submit" disabled={authBusy}>
+            {authBusy ? 'Please wait…' : authMode === 'register' ? 'Create account' : 'Sign in'}
+          </button>
+          <button className="auth-switch" type="button" onClick={() => {
+            setAuthMode((mode) => mode === 'register' ? 'login' : 'register');
+            setAuthError('');
+          }}>
+            {authMode === 'register' ? 'Already have an account? Sign in' : 'New to PathGuard Pay? Create an account'}
+          </button>
+        </form>
+      </div>
+    );
+  }
+
   return (
     <>
       <header>
@@ -379,6 +574,10 @@ function App() {
             <b>PathGuard Pay</b>
             <small>AI payment safety layer</small>
           </div>
+        </div>
+        <div className="account-controls">
+          <span className="account-label">{user.display_name} · {user.role}</span>
+          <button className="signout" onClick={signOut}>Sign out</button>
         </div>
         <span className="sandbox">● PayPal Sandbox</span>
       </header>
@@ -551,7 +750,96 @@ function App() {
             <button className="primary limits-save" disabled={limitsSaving} onClick={saveLimits}>
               {limitsSaving ? <><Loader2 className="spin" /> Saving limits…</> : <><Save /> Save spending limits</>}
             </button>
-            <small className="limits-footnote">This MVP currently has one shared policy per running instance, and limits are denominated in USD. Non-USD payments are blocked until currency conversion is supported.</small>
+            <small className="limits-footnote">These limits and payment history apply only to your account. Limits are denominated in USD; non-USD payments are blocked until currency conversion is supported.</small>
+          </div>
+
+          <div className="card info">
+            <h3><Activity /> Payment intelligence</h3>
+            <p className="limits-intro">
+              {intelligenceOverview?.scope === 'organization'
+                ? 'Operational signals across the organization.'
+                : 'Your account-level payment outcomes and recurring signals.'}
+            </p>
+            {intelligenceOverview ? (
+              <>
+                <div className="intelligence-metrics">
+                  <div><span>Total attempts</span><b>{Number(intelligenceOverview.total_payments || 0).toLocaleString()}</b></div>
+                  <div><span>Completed spend</span><b>${Number(intelligenceOverview.completed_spend_usd || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</b></div>
+                  <div><span>Completed</span><b>{Number(intelligenceOverview.completed_payments || 0).toLocaleString()}</b></div>
+                  <div><span>Blocked</span><b>{Number(intelligenceOverview.blocked_payments || 0).toLocaleString()}</b></div>
+                  <div><span>Awaiting review</span><b>{Number(intelligenceOverview.awaiting_review || 0).toLocaleString()}</b></div>
+                  <div><span>Success rate</span><b>{Number(intelligenceOverview.success_rate_percent || 0).toLocaleString()}%</b></div>
+                </div>
+                <div className="intelligence-submetrics">
+                  <span><CircleDollarSign /> Limit blocks: {Number(intelligenceOverview.spending_limit_blocks || 0).toLocaleString()}</span>
+                  <span><TrendingUp /> PayPal errors: {Number(intelligenceOverview.paypal_errors || 0).toLocaleString()}</span>
+                </div>
+              </>
+            ) : <p className="muted">Intelligence metrics are loading.</p>}
+            <div className="ai-summary-controls">
+              <button className="ai-summary-button" onClick={generateSummary} disabled={summaryLoading}>
+                {summaryLoading ? <><Loader2 className="spin" /> Generating summary…</> : <><Activity /> Generate AI investigation summary</>}
+              </button>
+              {summaryError && <div className="error limits-feedback">{summaryError}</div>}
+            </div>
+            {intelligenceSummary && (
+              <div className="ai-summary-block">
+                <div className="ai-summary-heading">
+                  <b>Investigation summary</b>
+                  <span>{intelligenceSummary.source === 'openrouter' ? 'OpenRouter AI' : 'Rule-based fallback'}</span>
+                </div>
+                <p>{intelligenceSummary.summary}</p>
+                {intelligenceSummary.priority_actions?.length > 0 && (
+                  <div className="ai-priority-actions">
+                    <strong>Priority actions</strong>
+                    {intelligenceSummary.priority_actions.map((action) => (
+                      <div key={action.title}>
+                        <span className={`incident-severity ${action.severity}`}>{action.severity}</span>
+                        <span><b>{action.title}</b><small>{action.action}</small></span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <small className="limits-footnote">{intelligenceSummary.disclaimer}</small>
+              </div>
+            )}
+            <div className="incident-heading">
+              <b><AlertTriangle /> Recent incident signals</b>
+              <span>{incidents.length}</span>
+            </div>
+            {incidents.length ? incidents.map((incident) => (
+              <div className="incident-item" key={incident.id}>
+                <div className="incident-title-row">
+                  <b>{incident.title}</b>
+                  <span className={`incident-severity ${incident.severity}`}>{incident.severity}</span>
+                </div>
+                <small>{incident.event_count_24h} events in 24h · {incident.affected_payments} affected payment(s)</small>
+                <p>{incident.summary}</p>
+                <div className="incident-action"><strong>Next step:</strong> {incident.recommended_action}</div>
+              </div>
+            )) : (
+              <p className="muted">No recurring incident patterns met the detection threshold in the last 24 hours.</p>
+            )}
+            <small className="limits-footnote">Signals are based on recorded audit events, not predictions. Suggested actions are guidance only; they never bypass risk decisions or spending limits.</small>
+          </div>
+
+          <div className="card info">
+            <h3><History /> Notifications <span className="queue-count">{notifications.length}</span></h3>
+            <p className="limits-intro">Recent payment and policy events from your account audit trail.</p>
+            {notifications.length ? notifications.slice(0, 8).map((item) => (
+              <div className="notification-item" key={item.id}>
+                <span className={`notification-dot ${item.severity}`}></span>
+                <div className="notification-content">
+                  <div className="notification-title-row">
+                    <b>{item.title}</b>
+                    <span className={`incident-severity ${item.severity}`}>{item.severity}</span>
+                  </div>
+                  <p>{item.message}</p>
+                  <small>{item.recipient} · {item.currency} {Number(item.amount).toLocaleString()} · {item.created_at ? new Date(item.created_at).toLocaleString() : ''}</small>
+                </div>
+              </div>
+            )) : <p className="muted">No recent notifications. PathGuard will surface important risk, policy, and payment events here.</p>}
+            <small className="limits-footnote">This is an in-app feed derived from audit events; email and push notifications are not configured in this MVP.</small>
           </div>
 
           <div className="card info">
@@ -562,7 +850,7 @@ function App() {
             <Step n="04" t="Pay" d="Only approved payments continue to PayPal." />
           </div>
 
-          <div className="card info">
+          {['reviewer', 'admin'].includes(user.role) && <div className="card info">
             <h3><Clock3 /> Human review queue <span className="queue-count">{reviewQueue.length}</span></h3>
             {reviewQueue.length ? reviewQueue.map((item) => (
               <div className="review-item" key={item.id}>
@@ -580,7 +868,7 @@ function App() {
                 </div>
               </div>
             )) : <p className="muted">No payments are waiting for review.</p>}
-          </div>
+          </div>}
 
           <div className="card info">
             <h3><History /> Recent activity</h3>

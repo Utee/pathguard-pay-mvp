@@ -6,6 +6,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.core.security import get_current_user
 from app.db import get_db
 from app.models import (
     AuditEvent,
@@ -14,6 +15,7 @@ from app.models import (
     Recipient,
     RiskAssessment,
     ReviewEvent,
+    UserAccount,
 )
 from app.schemas.payment import (
     AnalyzePaymentRequest,
@@ -337,14 +339,20 @@ async def _refresh_paypal_order(
 
 
 @router.post("/analyze", response_model=AnalyzePaymentResponse)
-def analyze_payment(payload: AnalyzePaymentRequest, db: Session = Depends(get_db)):
+def analyze_payment(
+    payload: AnalyzePaymentRequest,
+    db: Session = Depends(get_db),
+    current_user: UserAccount = Depends(get_current_user),
+):
     try:
         intent = extract_payment_intent(payload.instruction)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    risk = assess_payment(db, intent, payload.instruction)
-    risk, limit_violations = apply_spending_policy(db, intent, risk)
+    risk = assess_payment(db, intent, payload.instruction, user_id=current_user.id)
+    risk, limit_violations = apply_spending_policy(
+        db, intent, risk, user_id=current_user.id
+    )
 
     recipient_name = intent.recipient_name.strip()
     recipient = (
@@ -359,6 +367,7 @@ def analyze_payment(payload: AnalyzePaymentRequest, db: Session = Depends(get_db
         db.flush()
 
     payment = PaymentRequest(
+        user_id=current_user.id,
         raw_instruction=payload.instruction,
         recipient_name=recipient.name,
         recipient_id=recipient.id,
@@ -416,9 +425,13 @@ def analyze_payment(payload: AnalyzePaymentRequest, db: Session = Depends(get_db
 
 
 @router.get("")
-def list_payments(db: Session = Depends(get_db)):
+def list_payments(
+    db: Session = Depends(get_db),
+    current_user: UserAccount = Depends(get_current_user),
+):
     payments = (
         db.query(PaymentRequest)
+        .filter(PaymentRequest.user_id == current_user.id)
         .order_by(PaymentRequest.created_at.desc())
         .limit(50)
         .all()
@@ -440,10 +453,19 @@ def list_payments(db: Session = Depends(get_db)):
 
 
 @router.get("/recipients/{recipient_name}/history", response_model=RecipientHistoryResponse)
-def recipient_history(recipient_name: str, db: Session = Depends(get_db)):
+def recipient_history(
+    recipient_name: str,
+    db: Session = Depends(get_db),
+    current_user: UserAccount = Depends(get_current_user),
+):
     recipient = (
         db.query(Recipient)
-        .filter(Recipient.name.ilike(recipient_name))
+        .join(PaymentRequest, PaymentRequest.recipient_id == Recipient.id)
+        .filter(
+            Recipient.name.ilike(recipient_name),
+            PaymentRequest.user_id == current_user.id,
+            PaymentRequest.status == "COMPLETED",
+        )
         .first()
     )
     if not recipient:
@@ -453,6 +475,7 @@ def recipient_history(recipient_name: str, db: Session = Depends(get_db)):
         db.query(PaymentRequest)
         .filter(
             PaymentRequest.recipient_id == recipient.id,
+            PaymentRequest.user_id == current_user.id,
             PaymentRequest.status == "COMPLETED",
         )
         .order_by(PaymentRequest.created_at.desc())
@@ -576,13 +599,17 @@ def paypal_cancel(token: str | None = None, db: Session = Depends(get_db)):
 
 
 @router.post("/paypal/sync")
-async def sync_paypal_order(token: str, db: Session = Depends(get_db)):
+async def sync_paypal_order(
+    token: str,
+    db: Session = Depends(get_db),
+    current_user: UserAccount = Depends(get_current_user),
+):
     order = db.query(PayPalOrder).filter(PayPalOrder.paypal_order_id == token).first()
     if not order:
         raise HTTPException(status_code=404, detail="Unknown PayPal order")
 
     payment = db.get(PaymentRequest, order.payment_request_id)
-    if not payment:
+    if not payment or payment.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Payment not found")
 
     _ensure_payment_can_use_paypal(payment)
@@ -605,9 +632,13 @@ async def sync_paypal_order(token: str, db: Session = Depends(get_db)):
 
 
 @router.get("/{payment_id}")
-def get_payment(payment_id: int, db: Session = Depends(get_db)):
+def get_payment(
+    payment_id: int,
+    db: Session = Depends(get_db),
+    current_user: UserAccount = Depends(get_current_user),
+):
     payment = db.get(PaymentRequest, payment_id)
-    if not payment:
+    if not payment or payment.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Payment request not found")
 
     history = None
@@ -616,6 +647,7 @@ def get_payment(payment_id: int, db: Session = Depends(get_db)):
             db.query(PaymentRequest)
             .filter(
                 PaymentRequest.recipient_id == payment.recipient.id,
+                PaymentRequest.user_id == current_user.id,
                 PaymentRequest.status == "COMPLETED",
             )
             .order_by(PaymentRequest.created_at.desc())
@@ -684,9 +716,13 @@ def get_payment(payment_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/{payment_id}/audit", response_model=list[AuditEventResponse])
-def payment_audit(payment_id: int, db: Session = Depends(get_db)):
+def payment_audit(
+    payment_id: int,
+    db: Session = Depends(get_db),
+    current_user: UserAccount = Depends(get_current_user),
+):
     payment = db.get(PaymentRequest, payment_id)
-    if not payment:
+    if not payment or payment.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Payment request not found")
 
     return [
@@ -703,9 +739,13 @@ def payment_audit(payment_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{payment_id}/paypal/create", response_model=PayPalCreateResponse)
-async def create_paypal_order(payment_id: int, db: Session = Depends(get_db)):
+async def create_paypal_order(
+    payment_id: int,
+    db: Session = Depends(get_db),
+    current_user: UserAccount = Depends(get_current_user),
+):
     payment = db.get(PaymentRequest, payment_id)
-    if not payment:
+    if not payment or payment.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Payment request not found")
 
     _ensure_payment_can_use_paypal(payment)
@@ -772,9 +812,13 @@ async def create_paypal_order(payment_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{payment_id}/paypal/capture", response_model=PayPalCaptureResponse)
-async def capture_paypal_order(payment_id: int, db: Session = Depends(get_db)):
+async def capture_paypal_order(
+    payment_id: int,
+    db: Session = Depends(get_db),
+    current_user: UserAccount = Depends(get_current_user),
+):
     payment = db.get(PaymentRequest, payment_id)
-    if not payment or not payment.paypal_order:
+    if not payment or payment.user_id != current_user.id or not payment.paypal_order:
         raise HTTPException(status_code=404, detail="PayPal order not found")
 
     _ensure_payment_can_use_paypal(payment)

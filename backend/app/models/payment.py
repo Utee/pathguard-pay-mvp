@@ -25,6 +25,7 @@ class PaymentRequest(Base):
     __tablename__ = "payment_requests"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("user_accounts.id"), nullable=True, index=True)
     raw_instruction: Mapped[str] = mapped_column(Text)
     recipient_name: Mapped[str] = mapped_column(String(120), index=True)
     recipient_id: Mapped[int | None] = mapped_column(ForeignKey("recipients.id"), nullable=True)
@@ -43,6 +44,7 @@ class PaymentRequest(Base):
     status: Mapped[str] = mapped_column(String(40), default="ANALYZED", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
+    user: Mapped["UserAccount | None"] = relationship(back_populates="payments")
     recipient: Mapped["Recipient | None"] = relationship(back_populates="payments")
     risk: Mapped["RiskAssessment | None"] = relationship(
         back_populates="payment_request", uselist=False, cascade="all, delete-orphan"
@@ -130,14 +132,16 @@ class AuditEvent(Base):
 
 
 class SpendingLimitSettings(Base):
-    """Single-instance spending policy for the current local MVP (no user accounts yet)."""
-
     __tablename__ = "spending_limit_settings"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_accounts.id"), nullable=True, unique=True, index=True
+    )
     daily_limit: Mapped[float | None] = mapped_column(Float, nullable=True, default=1000.0)
     weekly_limit: Mapped[float | None] = mapped_column(Float, nullable=True, default=10000.0)
     monthly_limit: Mapped[float | None] = mapped_column(Float, nullable=True, default=10000.0)
     per_transaction_limit: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     timezone: Mapped[str] = mapped_column(String(80), default="Africa/Lagos")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    user: Mapped["UserAccount | None"] = relationship(back_populates="spending_limit_settings")
