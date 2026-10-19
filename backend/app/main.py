@@ -1,23 +1,30 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.payments import router as payments_router
+from app.api.auth import router as auth_router
 from app.api.limits import router as limits_router
+from app.api.payments import router as payments_router
 from app.api.reviews import router as reviews_router
+from app.core.config import get_settings
 from app.db import initialize_database
 
+settings = get_settings()
 initialize_database()
 
 app = FastAPI(
     title="PathGuard Pay",
-    version="0.2.0",
-    description="AI safety layer for PayPal payments.",
+    version="0.3.0",
+    description="AI safety layer for authenticated PayPal payments.",
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten this when the React frontend is deployed
-    allow_credentials=True,
+    allow_origins=[
+        origin.strip()
+        for origin in settings.cors_allowed_origins.split(",")
+        if origin.strip()
+    ],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
