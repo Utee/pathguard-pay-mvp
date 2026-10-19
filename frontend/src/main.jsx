@@ -12,6 +12,10 @@ import {
   XCircle,
   Settings2,
   Save,
+  Activity,
+  AlertTriangle,
+  TrendingUp,
+  CircleDollarSign,
 } from 'lucide-react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
@@ -68,6 +72,8 @@ function App() {
   const [payLoading, setPayLoading] = useState(false);
   const [error, setError] = useState('');
   const [paypalResult, setPaypalResult] = useState(null);
+  const [intelligenceOverview, setIntelligenceOverview] = useState(null);
+  const [incidents, setIncidents] = useState([]);
   const [limitDraft, setLimitDraft] = useState({
     daily_limit: 1000,
     weekly_limit: 10000,
@@ -108,6 +114,15 @@ function App() {
 
       const usage = await apiFetch(`${API}/api/limits/summary`);
       if (usage.ok) setLimitSummary(await usage.json());
+
+      const overview = await apiFetch(`${API}/api/intelligence/overview`);
+      if (overview.ok) setIntelligenceOverview(await overview.json());
+
+      const incidentResponse = await apiFetch(`${API}/api/intelligence/incidents`);
+      if (incidentResponse.ok) {
+        const data = await incidentResponse.json();
+        setIncidents(data.incidents || []);
+      }
     } catch {
       // Keep the dashboard usable if history is temporarily unavailable.
     }
@@ -310,6 +325,8 @@ function App() {
     setPayment(null);
     setHistory([]);
     setReviewQueue([]);
+    setIntelligenceOverview(null);
+    setIncidents([]);
     setLimitsInitialized(false);
     setLimitSummary(null);
   }
@@ -706,6 +723,49 @@ function App() {
               {limitsSaving ? <><Loader2 className="spin" /> Saving limits…</> : <><Save /> Save spending limits</>}
             </button>
             <small className="limits-footnote">These limits and payment history apply only to your account. Limits are denominated in USD; non-USD payments are blocked until currency conversion is supported.</small>
+          </div>
+
+          <div className="card info">
+            <h3><Activity /> Payment intelligence</h3>
+            <p className="limits-intro">
+              {intelligenceOverview?.scope === 'organization'
+                ? 'Operational signals across the organization.'
+                : 'Your account-level payment outcomes and recurring signals.'}
+            </p>
+            {intelligenceOverview ? (
+              <>
+                <div className="intelligence-metrics">
+                  <div><span>Total attempts</span><b>{Number(intelligenceOverview.total_payments || 0).toLocaleString()}</b></div>
+                  <div><span>Completed spend</span><b>${Number(intelligenceOverview.completed_spend_usd || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</b></div>
+                  <div><span>Completed</span><b>{Number(intelligenceOverview.completed_payments || 0).toLocaleString()}</b></div>
+                  <div><span>Blocked</span><b>{Number(intelligenceOverview.blocked_payments || 0).toLocaleString()}</b></div>
+                  <div><span>Awaiting review</span><b>{Number(intelligenceOverview.awaiting_review || 0).toLocaleString()}</b></div>
+                  <div><span>Success rate</span><b>{Number(intelligenceOverview.success_rate_percent || 0).toLocaleString()}%</b></div>
+                </div>
+                <div className="intelligence-submetrics">
+                  <span><CircleDollarSign /> Limit blocks: {Number(intelligenceOverview.spending_limit_blocks || 0).toLocaleString()}</span>
+                  <span><TrendingUp /> PayPal errors: {Number(intelligenceOverview.paypal_errors || 0).toLocaleString()}</span>
+                </div>
+              </>
+            ) : <p className="muted">Intelligence metrics are loading.</p>}
+            <div className="incident-heading">
+              <b><AlertTriangle /> Recent incident signals</b>
+              <span>{incidents.length}</span>
+            </div>
+            {incidents.length ? incidents.map((incident) => (
+              <div className="incident-item" key={incident.id}>
+                <div className="incident-title-row">
+                  <b>{incident.title}</b>
+                  <span className={`incident-severity ${incident.severity}`}>{incident.severity}</span>
+                </div>
+                <small>{incident.event_count_24h} events in 24h · {incident.affected_payments} affected payment(s)</small>
+                <p>{incident.summary}</p>
+                <div className="incident-action"><strong>Next step:</strong> {incident.recommended_action}</div>
+              </div>
+            )) : (
+              <p className="muted">No recurring incident patterns met the detection threshold in the last 24 hours.</p>
+            )}
+            <small className="limits-footnote">Signals are based on recorded audit events, not predictions. Suggested actions are guidance only; they never bypass risk decisions or spending limits.</small>
           </div>
 
           <div className="card info">
