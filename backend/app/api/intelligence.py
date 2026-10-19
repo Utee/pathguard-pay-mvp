@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.core.security import get_current_user
 from app.db import get_db
 from app.models import UserAccount
-from app.services.incident_intelligence import build_overview, detect_incidents, summarize_intelligence
+from app.services.incident_intelligence import build_notifications, build_overview, detect_incidents, summarize_intelligence
 
 router = APIRouter(prefix="/api/intelligence", tags=["payment-intelligence"])
 
@@ -36,3 +36,17 @@ def intelligence_summary(
     current_user: UserAccount = Depends(get_current_user),
 ):
     return summarize_intelligence(db, current_user)
+
+
+@router.get("/notifications")
+def intelligence_notifications(
+    limit: int = 15,
+    db: Session = Depends(get_db),
+    current_user: UserAccount = Depends(get_current_user),
+):
+    notifications = build_notifications(db, current_user, limit=limit)
+    return {
+        "scope": "organization" if current_user.role in {"reviewer", "admin"} else "account",
+        "history_window_days": 7,
+        "notifications": notifications,
+    }
