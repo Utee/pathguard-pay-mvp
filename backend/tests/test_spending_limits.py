@@ -161,3 +161,66 @@ def test_per_transaction_limit_is_enforced():
     )
     assert any("Per-transaction limit exceeded" in item for item in violations)
     db.close()
+
+
+def test_spending_usage_and_policy_are_isolated_per_user():
+    from app.models import UserAccount
+
+    db = make_db()
+    now = datetime(2026, 10, 10, 10, tzinfo=timezone.utc)
+    first_user = UserAccount(
+        email="first@example.com",
+        display_name="First",
+        password_hash="test-hash",
+        role="customer",
+        is_active=True,
+    )
+    second_user = UserAccount(
+        email="second@example.com",
+        display_name="Second",
+        password_hash="test-hash",
+        role="customer",
+        is_active=True,
+    )
+    db.add_all([first_user, second_user])
+    db.commit()
+    db.refresh(first_user)
+    db.refresh(second_user)
+
+    first_policy = get_or_create_settings(db, user_id=first_user.id)
+    first_policy.daily_limit = 1000
+    second_policy = get_or_create_settings(db, user_id=second_user.id)
+    second_policy.daily_limit = 300
+    db.add(payment(
+        amount=700,
+        status="COMPLETED",
+        created_at=now - timedelta(hours=1),
+    ))
+    db.flush()
+    first_payment = db.query(PaymentRequest).filter(PaymentRequest.user_id.is_(None)).first()
+    first_payment.user_id = first_user.id
+    db.commit()
+
+    first_violations, first_usage = check_spending_limits(
+        db,
+        amount=400,
+        currency="USD",
+        policy=first_policy,
+        now=now,
+        user_id=first_user.id,
+    )
+    second_violations, second_usage = check_spending_limits(
+        db,
+        amount=200,
+        currency="USD",
+        policy=second_policy,
+        now=now,
+        user_id=second_user.id,
+    )
+
+    assert first_usage["daily"] == 700
+    assert any("Daily spending limit exceeded" in item for item in first_violations)
+    assert second_usage["daily"] == 0
+    assert second_violations == []
+    assert get_or_create_settings(db, user_id=second_user.id).daily_limit == 300
+    db.close()
