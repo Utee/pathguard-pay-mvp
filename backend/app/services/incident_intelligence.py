@@ -88,6 +88,7 @@ def detect_incidents(db: Session, user: UserAccount, *, now: datetime | None = N
     recent_counts = defaultdict(int)
     historical_counts = defaultdict(int)
     latest_times = {}
+    first_seen_times = {}
     affected_payments = defaultdict(set)
 
     for event, _owner_id in events:
@@ -107,6 +108,8 @@ def detect_incidents(db: Session, user: UserAccount, *, now: datetime | None = N
             affected_payments[category].add(event.payment_request_id)
             if category not in latest_times or event_time > latest_times[category]:
                 latest_times[category] = event_time
+            if category not in first_seen_times or event_time < first_seen_times[category]:
+                first_seen_times[category] = event_time
         else:
             historical_counts[category] += 1
 
@@ -134,7 +137,7 @@ def detect_incidents(db: Session, user: UserAccount, *, now: datetime | None = N
             "event_count_24h": recent,
             "event_count_previous_6d": previous,
             "affected_payments": len(affected_payments[category]),
-            "first_seen_window": _event_time(recent_start),
+            "first_seen": _event_time(first_seen_times.get(category)),
             "last_seen": _event_time(latest_times.get(category)),
             "summary": rule["summary"],
             "recommended_action": rule["action"],
