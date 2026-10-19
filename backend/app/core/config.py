@@ -25,6 +25,8 @@ class Settings(BaseSettings):
 
     openai_api_key: str | None = None
     openai_model: str = "gpt-5-mini"
+    openrouter_api_key: str | None = None
+    openrouter_model: str = "openai/gpt-chat-latest"
 
     # ---------------------------------------------------------
     # PayPal
