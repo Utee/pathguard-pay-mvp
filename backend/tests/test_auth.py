@@ -61,6 +61,7 @@ def test_authentication_required_for_payment_and_limit_apis(client):
     assert client.get("/api/limits/settings").status_code == 401
     assert client.get("/api/intelligence/overview").status_code == 401
     assert client.get("/api/intelligence/incidents").status_code == 401
+    assert client.get("/api/intelligence/summary").status_code == 401
 
 
 def test_register_login_and_current_account(client):
