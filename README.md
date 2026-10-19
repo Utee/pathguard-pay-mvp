@@ -106,7 +106,7 @@ To point it at another backend, create `frontend/.env`:
 VITE_API_URL=http://127.0.0.1:8000
 ```
 
-## Test the risk engine
+## Test authentication and the risk engine
 
 No external credentials are required for the deterministic risk tests:
 
@@ -115,18 +115,22 @@ cd backend
 pytest
 ```
 
-You can also test the API directly:
+To use the API manually, create a customer account and retain its access token:
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/payments/analyze \
-  -H "Content-Type: application/json" \
-  -d '{"instruction":"Pay John $200 for the website"}'
+TOKEN="$(curl -s -X POST http://127.0.0.1:8000/api/auth/register -H "Content-Type: application/json" -d '{"email":"you@example.com","display_name":"Your Name","password":"a-unique-long-password-123"}' | python -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
 ```
 
-Try the dangerous demo:
+Then pass the token as a bearer credential on payment and limit requests:
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/payments/analyze \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"instruction":"Pay John $200 for the website"}'
+
+curl -X POST http://127.0.0.1:8000/api/payments/analyze \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"instruction":"Pay John $10000 for the website"}'
 ```
