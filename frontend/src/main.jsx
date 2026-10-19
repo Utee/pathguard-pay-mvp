@@ -74,6 +74,7 @@ function App() {
   const [paypalResult, setPaypalResult] = useState(null);
   const [intelligenceOverview, setIntelligenceOverview] = useState(null);
   const [incidents, setIncidents] = useState([]);
+  const [notifications, setNotifications] = useState([]);
   const [intelligenceSummary, setIntelligenceSummary] = useState(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryError, setSummaryError] = useState('');
@@ -125,6 +126,12 @@ function App() {
       if (incidentResponse.ok) {
         const data = await incidentResponse.json();
         setIncidents(data.incidents || []);
+      }
+
+      const notificationResponse = await apiFetch(`${API}/api/intelligence/notifications?limit=15`);
+      if (notificationResponse.ok) {
+        const data = await notificationResponse.json();
+        setNotifications(data.notifications || []);
       }
     } catch {
       // Keep the dashboard usable if history is temporarily unavailable.
@@ -330,6 +337,7 @@ function App() {
     setReviewQueue([]);
     setIntelligenceOverview(null);
     setIncidents([]);
+    setNotifications([]);
     setIntelligenceSummary(null);
     setSummaryError('');
     setLimitsInitialized(false);
@@ -813,6 +821,25 @@ function App() {
               <p className="muted">No recurring incident patterns met the detection threshold in the last 24 hours.</p>
             )}
             <small className="limits-footnote">Signals are based on recorded audit events, not predictions. Suggested actions are guidance only; they never bypass risk decisions or spending limits.</small>
+          </div>
+
+          <div className="card info">
+            <h3><History /> Notifications <span className="queue-count">{notifications.length}</span></h3>
+            <p className="limits-intro">Recent payment and policy events from your account audit trail.</p>
+            {notifications.length ? notifications.slice(0, 8).map((item) => (
+              <div className="notification-item" key={item.id}>
+                <span className={`notification-dot ${item.severity}`}></span>
+                <div className="notification-content">
+                  <div className="notification-title-row">
+                    <b>{item.title}</b>
+                    <span className={`incident-severity ${item.severity}`}>{item.severity}</span>
+                  </div>
+                  <p>{item.message}</p>
+                  <small>{item.recipient} · {item.currency} {Number(item.amount).toLocaleString()} · {item.created_at ? new Date(item.created_at).toLocaleString() : ''}</small>
+                </div>
+              </div>
+            )) : <p className="muted">No recent notifications. PathGuard will surface important risk, policy, and payment events here.</p>}
+            <small className="limits-footnote">This is an in-app feed derived from audit events; email and push notifications are not configured in this MVP.</small>
           </div>
 
           <div className="card info">
