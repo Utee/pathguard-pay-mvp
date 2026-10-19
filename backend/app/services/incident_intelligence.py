@@ -1,9 +1,12 @@
+import json
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
+import httpx
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.models import AuditEvent, PaymentRequest, UserAccount
 
 STAFF_ROLES = {"reviewer", "admin"}
@@ -201,3 +204,119 @@ def build_overview(db: Session, user: UserAccount) -> dict:
         "incident_window_hours": WINDOW_HOURS,
         "history_window_days": HISTORY_DAYS,
     }
+
+
+def _rule_based_summary(overview: dict, incidents: list[dict]) -> str:
+    if not overview["total_payments"]:
+        return "There is no payment activity yet, so PathGuard has no transaction patterns to investigate."
+    if not incidents:
+        return (
+            f"PathGuard recorded {overview['total_payments']} payment attempt(s), "
+            f"including {overview['completed_payments']} completed payment(s) and "
+            f"${overview['completed_spend_usd']:,.2f} in completed spend. "
+            "No recurring incident pattern met the current 24-hour detection thresholds. "
+            "This does not mean every payment is risk-free."
+        )
+    highest = incidents[0]
+    return (
+        f"{len(incidents)} recurring incident signal group(s) met the detection thresholds. "
+        f"The highest-priority signal is '{highest['title']}' "
+        f"({highest['event_count_24h']} event(s) in 24 hours). "
+        f"Suggested next step: {highest['recommended_action']} "
+        "These are heuristic signals, not confirmed root causes; keep deterministic risk "
+        "checks and spending caps in control."
+    )
+
+
+def summarize_intelligence(db: Session, user: UserAccount) -> dict:
+    overview = build_overview(db, user)
+    incidents = detect_incidents(db, user)
+    fallback = _rule_based_summary(overview, incidents)
+    settings = get_settings()
+    generated_at = datetime.now(timezone.utc).isoformat()
+
+    result = {
+        "scope": overview["scope"],
+        "source": "rules",
+        "summary": fallback,
+        "priority_actions": [
+            {
+                "title": item["title"],
+                "severity": item["severity"],
+                "action": item["recommended_action"],
+            }
+            for item in incidents[:3]
+        ],
+        "generated_at": generated_at,
+        "disclaimer": "This explanation is based on aggregate operational signals. It does not confirm root cause and never changes risk decisions or spending limits.",
+    }
+
+    api_key = settings.openrouter_api_key
+    if not api_key:
+        return result
+
+    aggregate = {
+        "metrics": {
+            "total_payments": overview["total_payments"],
+            "completed_payments": overview["completed_payments"],
+            "completed_spend_usd": overview["completed_spend_usd"],
+            "blocked_payments": overview["blocked_payments"],
+            "rejected_payments": overview["rejected_payments"],
+            "awaiting_review": overview["awaiting_review"],
+            "paypal_errors": overview["paypal_errors"],
+            "success_rate_percent": overview["success_rate_percent"],
+        },
+        "incident_signals": [
+            {
+                "title": item["title"],
+                "severity": item["severity"],
+                "count_24h": item["event_count_24h"],
+                "count_previous_6d": item["event_count_previous_6d"],
+                "summary": item["summary"],
+                "recommended_action": item["recommended_action"],
+                "signal": item["signal"],
+            }
+            for item in incidents[:5]
+        ],
+    }
+    try:
+        response = httpx.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "X-Title": "PathGuard Pay",
+            },
+            json={
+                "model": settings.openrouter_model,
+                "temperature": 0.2,
+                "max_tokens": 220,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are an operational analyst for a payment safety system. "
+                            "Summarize only the supplied aggregate metrics and incident signals "
+                            "in plain language. Clearly separate observed signals from hypotheses. "
+                            "Do not claim a confirmed root cause, do not invent data, and recommend "
+                            "safe investigations. Never propose bypassing a risk block or spending cap. "
+                            "Keep the response under 100 words."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": json.dumps(aggregate, separators=(",", ":")),
+                    },
+                ],
+            },
+            timeout=8.0,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        summary = payload["choices"][0]["message"]["content"]
+        if isinstance(summary, str) and summary.strip():
+            result["summary"] = summary.strip()
+            result["source"] = "openrouter"
+    except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError):
+        result["provider_status"] = "unavailable"
+    return result
