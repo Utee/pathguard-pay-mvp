@@ -18,6 +18,13 @@ import './styles.css';
 
 const API = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 
+function apiFetch(input, options = {}) {
+  const headers = { ...(options.headers || {}) };
+  const token = localStorage.getItem('pathguard_access_token');
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return fetch(input, { ...options, headers });
+}
+
 const STATUS_LABELS = {
   ALLOW: 'Approved',
   BLOCK: 'Blocked',
@@ -43,6 +50,15 @@ function statusMeta(status) {
 }
 
 function App() {
+  const [token, setToken] = useState(() => localStorage.getItem('pathguard_access_token'));
+  const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authMode, setAuthMode] = useState('login');
+  const [authEmail, setAuthEmail] = useState('');
+  const [authName, setAuthName] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState('');
   const [instruction, setInstruction] = useState('');
   const [payment, setPayment] = useState(null);
   const [history, setHistory] = useState([]);
@@ -65,15 +81,19 @@ function App() {
   const [limitsError, setLimitsError] = useState('');
   const [limitsSaved, setLimitsSaved] = useState('');
 
-  async function load() {
+  async function load(account = user) {
     try {
-      const r = await fetch(`${API}/api/payments`);
+      const r = await apiFetch(`${API}/api/payments`);
       if (r.ok) setHistory(await r.json());
 
-      const reviews = await fetch(`${API}/api/reviews`);
-      if (reviews.ok) setReviewQueue(await reviews.json());
+      if (account && ['reviewer', 'admin'].includes(account.role)) {
+        const reviews = await apiFetch(`${API}/api/reviews`);
+        if (reviews.ok) setReviewQueue(await reviews.json());
+      } else {
+        setReviewQueue([]);
+      }
 
-      const configuredLimits = await fetch(`${API}/api/limits/settings`);
+      const configuredLimits = await apiFetch(`${API}/api/limits/settings`);
       if (configuredLimits.ok && !limitsInitialized) {
         const d = await configuredLimits.json();
         setLimitDraft({
@@ -86,7 +106,7 @@ function App() {
         setLimitsInitialized(true);
       }
 
-      const usage = await fetch(`${API}/api/limits/summary`);
+      const usage = await apiFetch(`${API}/api/limits/summary`);
       if (usage.ok) setLimitSummary(await usage.json());
     } catch {
       // Keep the dashboard usable if history is temporarily unavailable.
@@ -97,7 +117,7 @@ function App() {
     if (!paymentId) return;
 
     try {
-      const r = await fetch(`${API}/api/payments/${paymentId}`);
+      const r = await apiFetch(`${API}/api/payments/${paymentId}`);
       const d = await r.json();
 
       if (r.ok && d?.id) {
@@ -120,7 +140,37 @@ function App() {
   }
 
   useEffect(() => {
-    load();
+    let active = true;
+    async function initialize() {
+      if (!token) {
+        setUser(null);
+        setAuthLoading(false);
+        return;
+      }
+
+      setAuthLoading(true);
+      try {
+        const accountResponse = await apiFetch(`${API}/api/auth/me`);
+        if (!active) return;
+        if (!accountResponse.ok) {
+          localStorage.removeItem('pathguard_access_token');
+          setToken(null);
+          setUser(null);
+          setAuthLoading(false);
+          return;
+        }
+        const account = await accountResponse.json();
+        if (!active) return;
+        setUser(account);
+        setAuthLoading(false);
+        load(account);
+      } catch {
+        if (active) {
+          setAuthLoading(false);
+          setAuthError('Could not connect to PathGuard Pay. Check that the backend is running.');
+        }
+        return;
+      }
 
     const q = new URLSearchParams(window.location.search);
     const paypalState = q.get('paypal');
@@ -138,7 +188,7 @@ function App() {
       if (!token) return null;
 
       try {
-        const r = await fetch(
+        const r = await apiFetch(
           `${API}/api/payments/paypal/sync?token=${encodeURIComponent(token)}`,
           { method: 'POST' }
         );
@@ -171,7 +221,7 @@ function App() {
       if (paypalToken) {
         synced = await syncReturnedPayment(paypalToken);
       } else if (effectivePaymentId) {
-        const current = await fetch(`${API}/api/payments/${effectivePaymentId}`);
+        const current = await apiFetch(`${API}/api/payments/${effectivePaymentId}`);
         if (current.ok) {
           const d = await current.json();
           const token = d?.paypal?.order_id;
@@ -204,21 +254,72 @@ function App() {
         });
       }
 
-      load();
+      load(account);
       localStorage.removeItem('pathguard_paypal_payment_id');
     }
 
     restoreAfterPayPalReturn();
 
     window.history.replaceState({}, '', window.location.pathname);
-  }, []);
+    }
+
+    initialize();
+    return () => { active = false; };
+  }, [token]);
+
+  async function submitAuth(event) {
+    event.preventDefault();
+    setAuthBusy(true);
+    setAuthError('');
+    try {
+      const endpoint = authMode === 'register' ? '/api/auth/register' : '/api/auth/login';
+      const payload = authMode === 'register'
+        ? { email: authEmail, display_name: authName, password: authPassword }
+        : { email: authEmail, password: authPassword };
+      const response = await fetch(`${API}${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        const detail = typeof data.detail === 'string'
+          ? data.detail
+          : Array.isArray(data.detail)
+            ? data.detail.map((item) => item.msg).join('; ')
+            : 'Authentication failed.';
+        throw new Error(detail);
+      }
+      localStorage.setItem('pathguard_access_token', data.access_token);
+      setUser(data.user);
+      setToken(data.access_token);
+      setAuthPassword('');
+      setAuthError('');
+    } catch (error) {
+      setAuthError(error.message || 'Authentication failed.');
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  function signOut() {
+    localStorage.removeItem('pathguard_access_token');
+    localStorage.removeItem('pathguard_paypal_payment_id');
+    setToken(null);
+    setUser(null);
+    setPayment(null);
+    setHistory([]);
+    setReviewQueue([]);
+    setLimitsInitialized(false);
+    setLimitSummary(null);
+  }
 
   async function decideReview(item, action) {
     setReviewLoading(true);
     setError('');
 
     try {
-      const r = await fetch(`${API}/api/reviews/${item.id}/${action}`, {
+      const r = await apiFetch(`${API}/api/reviews/${item.id}/${action}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -270,7 +371,7 @@ function App() {
     }
 
     try {
-      const r = await fetch(`${API}/api/limits/settings`, {
+      const r = await apiFetch(`${API}/api/limits/settings`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -287,7 +388,7 @@ function App() {
 
       setLimitDraft(d);
       setLimitsSaved('Spending limits saved. New and pending payments will be checked against these settings.');
-      const summaryResponse = await fetch(`${API}/api/limits/summary`);
+      const summaryResponse = await apiFetch(`${API}/api/limits/summary`);
       if (summaryResponse.ok) setLimitSummary(await summaryResponse.json());
     } catch (e) {
       setLimitsError(e.message || 'Could not save spending limits');
@@ -305,7 +406,7 @@ function App() {
     setPayment(null);
 
     try {
-      const r = await fetch(`${API}/api/payments/analyze`, {
+      const r = await apiFetch(`${API}/api/payments/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ instruction }),
@@ -335,7 +436,7 @@ function App() {
     setError('');
 
     try {
-      const r = await fetch(
+      const r = await apiFetch(
         `${API}/api/payments/${payment.payment_id}/paypal/create`,
         { method: 'POST' }
       );
@@ -370,6 +471,55 @@ function App() {
   const decision = risk?.decision;
   const currentStatus = payment?.status || decision;
 
+  if (authLoading) {
+    return (
+      <div className="auth-shell">
+        <div className="auth-card">
+          <div className="logo"><ShieldCheck /></div>
+          <h1>PathGuard Pay</h1>
+          <p>Verifying your secure session…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="auth-shell">
+        <form className="auth-card" onSubmit={submitAuth}>
+          <div className="logo"><ShieldCheck /></div>
+          <div className="eyebrow">PATHGUARD PAY</div>
+          <h1>{authMode === 'register' ? 'Create your account' : 'Welcome back'}</h1>
+          <p>{authMode === 'register'
+            ? 'Your payments and spending limits are private to your account.'
+            : 'Sign in to review payment risk and manage your personal spending limits.'}</p>
+          {authMode === 'register' && (
+            <label className="auth-field">Display name
+              <input autoComplete="name" required maxLength={120} value={authName} onChange={(event) => setAuthName(event.target.value)} />
+            </label>
+          )}
+          <label className="auth-field">Email
+            <input type="email" autoComplete="email" required value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} />
+          </label>
+          <label className="auth-field">Password
+            <input type="password" autoComplete={authMode === 'register' ? 'new-password' : 'current-password'} minLength={authMode === 'register' ? 12 : 1} required value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} />
+          </label>
+          {authMode === 'register' && <small className="auth-note">Use at least 12 characters. Staff roles are assigned separately by an administrator.</small>}
+          {authError && <div className="error">{authError}</div>}
+          <button className="primary auth-submit" type="submit" disabled={authBusy}>
+            {authBusy ? 'Please wait…' : authMode === 'register' ? 'Create account' : 'Sign in'}
+          </button>
+          <button className="auth-switch" type="button" onClick={() => {
+            setAuthMode((mode) => mode === 'register' ? 'login' : 'register');
+            setAuthError('');
+          }}>
+            {authMode === 'register' ? 'Already have an account? Sign in' : 'New to PathGuard Pay? Create an account'}
+          </button>
+        </form>
+      </div>
+    );
+  }
+
   return (
     <>
       <header>
@@ -379,6 +529,10 @@ function App() {
             <b>PathGuard Pay</b>
             <small>AI payment safety layer</small>
           </div>
+        </div>
+        <div className="account-controls">
+          <span className="account-label">{user.display_name} · {user.role}</span>
+          <button className="signout" onClick={signOut}>Sign out</button>
         </div>
         <span className="sandbox">● PayPal Sandbox</span>
       </header>
@@ -551,7 +705,7 @@ function App() {
             <button className="primary limits-save" disabled={limitsSaving} onClick={saveLimits}>
               {limitsSaving ? <><Loader2 className="spin" /> Saving limits…</> : <><Save /> Save spending limits</>}
             </button>
-            <small className="limits-footnote">This MVP currently has one shared policy per running instance, and limits are denominated in USD. Non-USD payments are blocked until currency conversion is supported.</small>
+            <small className="limits-footnote">These limits and payment history apply only to your account. Limits are denominated in USD; non-USD payments are blocked until currency conversion is supported.</small>
           </div>
 
           <div className="card info">
@@ -562,7 +716,7 @@ function App() {
             <Step n="04" t="Pay" d="Only approved payments continue to PayPal." />
           </div>
 
-          <div className="card info">
+          {['reviewer', 'admin'].includes(user.role) && <div className="card info">
             <h3><Clock3 /> Human review queue <span className="queue-count">{reviewQueue.length}</span></h3>
             {reviewQueue.length ? reviewQueue.map((item) => (
               <div className="review-item" key={item.id}>
@@ -580,7 +734,7 @@ function App() {
                 </div>
               </div>
             )) : <p className="muted">No payments are waiting for review.</p>}
-          </div>
+          </div>}
 
           <div className="card info">
             <h3><History /> Recent activity</h3>
