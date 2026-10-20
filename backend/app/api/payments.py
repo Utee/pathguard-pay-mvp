@@ -784,6 +784,7 @@ def payment_audit(
 @router.post("/{payment_id}/paypal/create", response_model=PayPalCreateResponse)
 async def create_paypal_order(
     payment_id: int,
+    use_saved_wallet: bool = False,
     db: Session = Depends(get_db),
     current_user: UserAccount = Depends(get_current_user),
 ):
@@ -792,6 +793,21 @@ async def create_paypal_order(
         raise HTTPException(status_code=404, detail="Payment request not found")
 
     _ensure_payment_can_use_paypal(payment)
+
+    if use_saved_wallet:
+        connection = (
+            db.query(PayPalWalletConnection)
+            .filter(
+                PayPalWalletConnection.user_id == current_user.id,
+                PayPalWalletConnection.payment_token_ciphertext.is_not(None),
+            )
+            .first()
+        )
+        if not connection:
+            raise HTTPException(
+                status_code=409,
+                detail="Connect a PayPal wallet in account settings before choosing saved-wallet payment.",
+            )
 
     existing = payment.paypal_order
 
@@ -850,7 +866,12 @@ async def create_paypal_order(
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     try:
-        order = await _create_or_replace_paypal_order(db, payment, existing)
+        order = await _create_or_replace_paypal_order(
+            db,
+            payment,
+            existing,
+            use_saved_wallet=use_saved_wallet,
+        )
     except PayPalError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
