@@ -36,6 +36,7 @@ class PayPalCreateResponse(BaseModel):
     paypal_order_id: str
     status: str
     approval_url: str | None = None
+    capture_id: str | None = None
 
 
 class PayPalCaptureResponse(BaseModel):
