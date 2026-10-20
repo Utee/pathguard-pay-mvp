@@ -35,7 +35,7 @@ textarea:focus{border-color:#5789ff}
 .summary>div{padding:12px;border:1px solid #ffffff0b;background:#ffffff04;border-radius:11px}.summary small,.summary b{display:block}.summary b{font-size:12px;margin-top:5px}
 .reasons{border-top:1px solid #ffffff0c;padding-top:15px}.reasons>b{display:flex;gap:7px;align-items:center;font-size:12px}.reasons>b svg{width:15px}
 .reasons p{font-size:11px;color:#8e9caf;margin:8px 0}
-.paypal{width:100%;margin-top:16px;background:#ffc439;color:#111827}
+.paypal{width:100%;margin-top:16px;background:#ffc439;color:#111827}.paypal.saved-paypal{margin-top:10px;background:#1b2b44;color:#d3e1f8;border:1px solid #3d5275}.paypal.saved-paypal:hover:not(:disabled){filter:brightness(1.14)}
 .blocked{margin-top:16px;padding:12px;border-radius:10px;background:#ff566b0d;border:1px solid #ff566b22;color:#ff9daa;font-size:12px;font-weight:700;display:flex;gap:8px;align-items:center}
 .review-held{background:#f7b94a0d;border-color:#f7b94a25;color:#f7c76d}.review-rejected{background:#ff566b0d;border-color:#ff566b25}
 .paypal-held{background:#79a0ff0d;border-color:#79a0ff25;color:#9cb9ff}
