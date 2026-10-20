@@ -537,17 +537,15 @@ function App() {
     }
   }
 
-  async function paypal() {
+  async function paypal(useSavedWallet = false) {
     if (!payment?.payment_id) return;
 
     setPayLoading(true);
     setError('');
 
     try {
-      const r = await apiFetch(
-        `${API}/api/payments/${payment.payment_id}/paypal/create`,
-        { method: 'POST' }
-      );
+      const endpoint = `${API}/api/payments/${payment.payment_id}/paypal/create${useSavedWallet ? '?use_saved_wallet=true' : ''}`;
+      const r = await apiFetch(endpoint, { method: 'POST' });
 
       const d = await r.json();
       if (!r.ok) throw new Error(d.detail || 'PayPal order failed');
@@ -820,7 +818,9 @@ function App() {
               decision={decision}
               status={currentStatus}
               loading={payLoading}
-              onPay={paypal}
+              onPay={() => paypal(false)}
+              onPayWithSavedWallet={() => paypal(true)}
+              paypalConnected={paypalConnection.connected}
             />
           )}
         </section>
@@ -837,7 +837,7 @@ function App() {
                     <small>{paypalConnection.email_address || 'Your PayPal wallet is linked to this PathGuard account.'}</small>
                   </div>
                 </div>
-                <p className="limits-intro">After PathGuard approves a payment, the saved wallet can be used to complete it. PayPal may still redirect you when additional payer action is required.</p>
+                <p className="limits-intro">Your wallet is linked. "Continue with PayPal" still opens PayPal Checkout for approval; the payment review also offers a separate saved-wallet option for quicker checkout.</p>
               </>
             ) : (
               <p className="limits-intro">Connect your PayPal Sandbox wallet once. PayPal will ask you to sign in and authorize saving the wallet for future payments.</p>
@@ -1008,7 +1008,7 @@ function Step({ n, t, d }) {
   );
 }
 
-function Risk({ payment, decision, status, loading, onPay }) {
+function Risk({ payment, decision, status, loading, onPay, onPayWithSavedWallet, paypalConnected }) {
   const decisionConfig = {
     ALLOW: ['allow', <CheckCircle2 />, 'Payment approved'],
     REVIEW: ['review', <Clock3 />, 'Payment needs review'],
@@ -1079,11 +1079,20 @@ function Risk({ payment, decision, status, loading, onPay }) {
       ) : status === 'PAYPAL_PENDING_CAPTURE' ? (
         <div className="blocked paypal-held"><Loader2 className="spin" /> PayPal approved. Capture is in progress.</div>
       ) : canPay ? (
-        <button className="paypal" disabled={loading} onClick={onPay}>
-          {loading
-            ? <><Loader2 className="spin" /> Creating PayPal order…</>
-            : <>Continue with PayPal <ArrowRight /></>}
-        </button>
+        <>
+          <button className="paypal" disabled={loading} onClick={onPay}>
+            {loading
+              ? <><Loader2 className="spin" /> Creating PayPal order…</>
+              : <>Continue with PayPal <ArrowRight /></>}
+          </button>
+          {paypalConnected && (
+            <button className="paypal saved-paypal" disabled={loading} onClick={onPayWithSavedWallet}>
+              {loading
+                ? <><Loader2 className="spin" /> Processing payment…</>
+                : <>Pay with saved PayPal wallet <ShieldCheck /></>}
+            </button>
+          )}
+        </>
       ) : null}
     </div>
   );
