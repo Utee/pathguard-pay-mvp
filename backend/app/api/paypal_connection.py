@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone
 from urllib.parse import urlencode
 
@@ -18,6 +19,7 @@ from app.services.paypal_vault import (
 )
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/paypal/connection", tags=["PayPal connection"])
 
 
@@ -115,11 +117,17 @@ async def setup_paypal_connection(
 async def paypal_connection_return(
     token: str | None = None,
     setup_token_id: str | None = None,
+    ba_token: str | None = None,
+    approval_session_id: str | None = None,
     db: Session = Depends(get_db),
 ):
-    token_id = token or setup_token_id
+    token_id = token or setup_token_id or ba_token or approval_session_id
     if not token_id:
-        return _frontend_redirect(paypal_connect="error")
+        logger.warning("PayPal Vault callback did not include a recognized setup-token identifier")
+        return _frontend_redirect(
+            paypal_connect="error",
+            reason="missing_return_token",
+        )
 
     connection = (
         db.query(PayPalWalletConnection)
@@ -127,7 +135,15 @@ async def paypal_connection_return(
         .first()
     )
     if not connection:
-        return _frontend_redirect(paypal_connect="error")
+        logger.warning(
+            "PayPal Vault callback did not match a pending connection; callback_parameter=%s",
+            "token" if token else "setup_token_id" if setup_token_id else
+            "ba_token" if ba_token else "approval_session_id",
+        )
+        return _frontend_redirect(
+            paypal_connect="error",
+            reason="pending_connection_not_found",
+        )
 
     try:
         data = await PayPalClient().create_payment_token(token_id)
@@ -145,10 +161,34 @@ async def paypal_connection_return(
         connection.connected_at = datetime.now(timezone.utc)
         connection.updated_at = datetime.now(timezone.utc)
         db.commit()
-    except (PayPalError, PayPalVaultConfigurationError, ValueError):
-        connection.pending_setup_token_id = None
-        db.commit()
-        return _frontend_redirect(paypal_connect="error")
+    except PayPalError as exc:
+        logger.warning(
+            "PayPal Vault token exchange failed: status=%s code=%s issue=%s debug_id=%s",
+            exc.status_code,
+            exc.name,
+            exc.issue,
+            exc.debug_id,
+        )
+        return _frontend_redirect(
+            paypal_connect="error",
+            reason="paypal_token_exchange_failed",
+            paypal_status=exc.status_code,
+            paypal_code=exc.name,
+            paypal_issue=exc.issue,
+            paypal_debug_id=exc.debug_id,
+        )
+    except PayPalVaultConfigurationError:
+        logger.exception("PayPal Vault token exchange could not encrypt the returned token")
+        return _frontend_redirect(
+            paypal_connect="error",
+            reason="encryption_key_invalid",
+        )
+    except ValueError:
+        logger.exception("PayPal Vault token exchange returned an invalid response")
+        return _frontend_redirect(
+            paypal_connect="error",
+            reason="invalid_token_response",
+        )
 
     return _frontend_redirect(paypal_connect="connected")
 
@@ -157,9 +197,11 @@ async def paypal_connection_return(
 def paypal_connection_cancel(
     token: str | None = None,
     setup_token_id: str | None = None,
+    ba_token: str | None = None,
+    approval_session_id: str | None = None,
     db: Session = Depends(get_db),
 ):
-    token_id = token or setup_token_id
+    token_id = token or setup_token_id or ba_token or approval_session_id
     if token_id:
         connection = (
             db.query(PayPalWalletConnection)

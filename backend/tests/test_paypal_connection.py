@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from cryptography.fernet import Fernet
@@ -13,6 +14,7 @@ from app.main import app
 import app.api.paypal_connection as paypal_connection_api
 import app.services.paypal as paypal_service
 import app.services.paypal_vault as paypal_vault
+from app.models import PayPalWalletConnection
 
 
 @pytest.fixture
@@ -259,3 +261,91 @@ def test_connection_status_is_private_to_each_account(client):
         "/api/paypal/connection",
         headers=auth_headers(second),
     ).json()["connected"] is False
+
+
+
+def test_callback_accepts_paypal_approval_session_id_alias(client, monkeypatch):
+    account = register(client, "approval-alias@example.com")
+    headers = auth_headers(account)
+    calls = {}
+
+    async def create_setup_token(self, *, merchant_customer_id, return_url, cancel_url):
+        return {
+            "id": "sandbox-approval-alias",
+            "status": "PAYER_ACTION_REQUIRED",
+            "links": [{"rel": "approve", "href": "https://www.sandbox.paypal.com/agreements/approve?approval_session_id=sandbox-approval-alias"}],
+        }
+
+    async def create_payment_token(self, setup_token_id):
+        calls["setup_token_id"] = setup_token_id
+        return {
+            "id": "sandbox-payment-token-alias",
+            "customer": {"id": "sandbox-customer-alias"},
+            "payment_source": {"paypal": {"email_address": "alias@example.com"}},
+        }
+
+    monkeypatch.setattr(paypal_service.PayPalClient, "create_setup_token", create_setup_token)
+    monkeypatch.setattr(paypal_service.PayPalClient, "create_payment_token", create_payment_token)
+
+    setup = client.post("/api/paypal/connection/setup", headers=headers)
+    assert setup.status_code == 200
+
+    returned = client.get(
+        "/api/paypal/connection/return?approval_session_id=sandbox-approval-alias",
+        follow_redirects=False,
+    )
+    assert returned.status_code == 303
+    assert "paypal_connect=connected" in returned.headers["location"]
+    assert calls["setup_token_id"] == "sandbox-approval-alias"
+
+
+def test_callback_surfaces_paypal_token_exchange_diagnostics_and_keeps_pending_setup(client, monkeypatch):
+    account = register(client, "diagnostic-owner@example.com")
+    headers = auth_headers(account)
+
+    async def create_setup_token(self, *, merchant_customer_id, return_url, cancel_url):
+        return {
+            "id": "sandbox-diagnostic-setup",
+            "status": "PAYER_ACTION_REQUIRED",
+            "links": [{"rel": "approve", "href": "https://www.sandbox.paypal.com/agreements/approve?approval_session_id=sandbox-diagnostic-setup"}],
+        }
+
+    async def create_payment_token(self, setup_token_id):
+        raise paypal_service.PayPalError(
+            "PayPal create vault payment token failed",
+            status_code=403,
+            name="AUTHORIZATION_ERROR",
+            issue="INSUFFICIENT_SCOPE",
+            debug_id="sandbox-debug-456",
+        )
+
+    monkeypatch.setattr(paypal_service.PayPalClient, "create_setup_token", create_setup_token)
+    monkeypatch.setattr(paypal_service.PayPalClient, "create_payment_token", create_payment_token)
+
+    setup = client.post("/api/paypal/connection/setup", headers=headers)
+    assert setup.status_code == 200
+
+    returned = client.get(
+        "/api/paypal/connection/return?token=sandbox-diagnostic-setup",
+        follow_redirects=False,
+    )
+    assert returned.status_code == 303
+    query = parse_qs(urlparse(returned.headers["location"]).query)
+    assert query["paypal_connect"] == ["error"]
+    assert query["reason"] == ["paypal_token_exchange_failed"]
+    assert query["paypal_status"] == ["403"]
+    assert query["paypal_code"] == ["AUTHORIZATION_ERROR"]
+    assert query["paypal_issue"] == ["INSUFFICIENT_SCOPE"]
+    assert query["paypal_debug_id"] == ["sandbox-debug-456"]
+
+    db_session = next(iter(app.dependency_overrides[get_db]()))
+    try:
+        pending = (
+            db_session.query(PayPalWalletConnection)
+            .filter(PayPalWalletConnection.user_id == account["user"]["id"])
+            .one()
+        )
+        assert pending.pending_setup_token_id == "sandbox-diagnostic-setup"
+        assert pending.payment_token_ciphertext is None
+    finally:
+        db_session.close()
