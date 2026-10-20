@@ -38,6 +38,9 @@ def _additive_migrations() -> None:
         "spending_limit_settings": {
             "user_id": 'INTEGER REFERENCES "user_accounts"(id)',
         },
+        "paypal_wallet_connections": {
+            "pending_state": "VARCHAR(128)",
+        },
     }
 
     with engine.begin() as conn:
