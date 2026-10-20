@@ -146,6 +146,17 @@ def test_connect_saved_wallet_use_it_for_approved_payment_and_disconnect(client,
         calls["order_amount"] = amount
         calls["order_currency"] = currency
         calls["reference_id"] = reference_id
+        if not vault_id:
+            return {
+                "id": "sandbox-redirect-order",
+                "status": "CREATED",
+                "links": [
+                    {
+                        "rel": "approve",
+                        "href": "https://www.sandbox.paypal.com/checkoutnow?token=sandbox-redirect-order",
+                    }
+                ],
+            }
         return {
             "id": "sandbox-vault-order",
             "status": "COMPLETED",
@@ -193,17 +204,36 @@ def test_connect_saved_wallet_use_it_for_approved_payment_and_disconnect(client,
     )
     assert analysis.status_code == 200
     assert analysis.json()["risk"]["decision"] == "ALLOW"
-    payment_id = analysis.json()["payment_id"]
+    redirect_payment_id = analysis.json()["payment_id"]
 
     checkout = client.post(
-        f"/api/payments/{payment_id}/paypal/create",
+        f"/api/payments/{redirect_payment_id}/paypal/create",
         headers=headers,
     )
     assert checkout.status_code == 200
-    assert checkout.json()["status"] == "COMPLETED"
-    assert checkout.json()["capture_id"] == "sandbox-capture-id"
+    assert checkout.json()["status"] == "CREATED"
+    assert checkout.json()["approval_url"].startswith("https://www.sandbox.paypal.com/")
+    assert calls["vault_id"] is None
+
+    saved_analysis = client.post(
+        "/api/payments/analyze",
+        headers=headers,
+        json={"instruction": "Pay Mark $80 for the book"},
+    )
+    assert saved_analysis.status_code == 200
+    assert saved_analysis.json()["risk"]["decision"] == "ALLOW"
+    payment_id = saved_analysis.json()["payment_id"]
+
+    saved_checkout = client.post(
+        f"/api/payments/{payment_id}/paypal/create?use_saved_wallet=true",
+        headers=headers,
+    )
+    assert saved_checkout.status_code == 200
+    assert saved_checkout.json()["status"] == "COMPLETED"
+    assert saved_checkout.json()["capture_id"] == "sandbox-capture-id"
     assert calls["vault_id"] == "sandbox-vault-payment-token"
     assert calls["order_currency"] == "USD"
+    assert calls["order_amount"] == 80
 
     detail = client.get(f"/api/payments/{payment_id}", headers=headers)
     assert detail.status_code == 200
