@@ -197,9 +197,11 @@ async def paypal_connection_return(
 def paypal_connection_cancel(
     token: str | None = None,
     setup_token_id: str | None = None,
+    ba_token: str | None = None,
+    approval_session_id: str | None = None,
     db: Session = Depends(get_db),
 ):
-    token_id = token or setup_token_id
+    token_id = token or setup_token_id or ba_token or approval_session_id
     if token_id:
         connection = (
             db.query(PayPalWalletConnection)
