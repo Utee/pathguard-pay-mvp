@@ -116,6 +116,7 @@ class PayPalClient:
         description: str,
         *,
         reference_id: str | None = None,
+        vault_id: str | None = None,
     ) -> dict[str, Any]:
         if amount <= 0:
             raise PayPalError("PayPal order amount must be greater than zero.")
@@ -139,13 +140,16 @@ class PayPalClient:
         payload = {
             "intent": "CAPTURE",
             "purchase_units": [purchase_unit],
-            "application_context": {
+        }
+        if vault_id:
+            payload["payment_source"] = {"paypal": {"vault_id": vault_id}}
+        else:
+            payload["application_context"] = {
                 "brand_name": "PathGuard",
                 "user_action": "PAY_NOW",
                 "return_url": settings.paypal_return_url,
                 "cancel_url": settings.paypal_cancel_url,
-            },
-        }
+            }
 
         async with httpx.AsyncClient(timeout=30) as client:
             response = await client.post(
@@ -164,6 +168,98 @@ class PayPalClient:
             raise _paypal_error(response, "create order")
 
         return response.json()
+
+    async def create_setup_token(
+        self,
+        *,
+        merchant_customer_id: str,
+        return_url: str,
+        cancel_url: str,
+    ) -> dict[str, Any]:
+        token = await self.access_token()
+        payload = {
+            "customer": {"merchant_customer_id": merchant_customer_id},
+            "payment_source": {
+                "paypal": {
+                    "description": "Save this PayPal wallet for PathGuard Pay checkouts.",
+                    "permit_multiple_payment_tokens": False,
+                    "usage_pattern": "IMMEDIATE",
+                    "usage_type": "MERCHANT",
+                    "customer_type": "CONSUMER",
+                    "experience_context": {
+                        "brand_name": "PathGuard Pay",
+                        "locale": "en-US",
+                        "payment_method_preference": "IMMEDIATE_PAYMENT_REQUIRED",
+                        "shipping_preference": "NO_SHIPPING",
+                        "return_url": return_url,
+                        "cancel_url": cancel_url,
+                    },
+                }
+            },
+        }
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(
+                f"{self.base_url}/v3/vault/setup-tokens",
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "PayPal-Request-Id": f"pathguard-setup-{uuid4()}",
+                },
+            )
+
+        if response.is_error:
+            raise _paypal_error(response, "create vault setup token")
+
+        return response.json()
+
+    async def create_payment_token(self, setup_token_id: str) -> dict[str, Any]:
+        token = await self.access_token()
+        payload = {
+            "payment_source": {
+                "token": {
+                    "id": setup_token_id,
+                    "type": "SETUP_TOKEN",
+                }
+            }
+        }
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(
+                f"{self.base_url}/v3/vault/payment-tokens",
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "PayPal-Request-Id": f"pathguard-vault-{uuid4()}",
+                },
+            )
+
+        if response.is_error:
+            raise _paypal_error(response, "create vault payment token")
+
+        return response.json()
+
+    async def delete_payment_token(self, payment_token_id: str) -> None:
+        if not payment_token_id:
+            raise PayPalError("PayPal payment token ID is required.")
+
+        token = await self.access_token()
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.delete(
+                f"{self.base_url}/v3/vault/payment-tokens/{payment_token_id}",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/json",
+                },
+            )
+
+        if response.is_error:
+            raise _paypal_error(response, "delete vault payment token")
 
     async def get_order(self, order_id: str) -> dict[str, Any]:
         if not order_id:
