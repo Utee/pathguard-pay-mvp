@@ -18,11 +18,13 @@ class PayPalError(RuntimeError):
         *,
         status_code: int | None = None,
         name: str | None = None,
+        issue: str | None = None,
         debug_id: str | None = None,
     ):
         super().__init__(message)
         self.status_code = status_code
         self.name = name
+        self.issue = issue
         self.debug_id = debug_id
 
 
@@ -64,6 +66,7 @@ def _paypal_error(response: httpx.Response, operation: str) -> PayPalError:
             message,
             status_code=response.status_code,
             name=name,
+            issue=issue,
             debug_id=debug_id,
         )
 
@@ -71,6 +74,7 @@ def _paypal_error(response: httpx.Response, operation: str) -> PayPalError:
         message,
         status_code=response.status_code,
         name=name,
+        issue=issue,
         debug_id=debug_id,
     )
 
