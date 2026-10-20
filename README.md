@@ -159,7 +159,7 @@ The backend uses PayPal's Sandbox REST base URL:
 
 `https://api-m.sandbox.paypal.com`
 
-Users can connect a PayPal Sandbox wallet from the dashboard. PathGuard creates a PayPal Vault setup token, redirects the buyer to PayPal to authorize storing the wallet, then exchanges the approved setup token for a reusable payment token. The token is encrypted at rest and is never returned by the API. Enable `Vault` in the Sandbox REST app's Advanced options. If a connected wallet is used, PayPal may complete the order directly using the saved token; if PayPal requires payer action, the buyer is redirected to the PayPal approval page. PathGuard's risk decision, manual review, and spending-limit checks still run first. This is a Sandbox feature; live use requires separate PayPal eligibility and configuration.
+Users can connect a PayPal Sandbox wallet from the dashboard. PathGuard creates a PayPal Vault setup token, redirects the buyer to PayPal to authorize storing the wallet, then exchanges the approved setup token for a reusable payment token. The token is encrypted at rest and is never returned by the API. Enable `Accept payments` and `Vault` in the Sandbox REST app's Advanced options. By default, a payment still uses the standard PayPal Checkout approval redirect. The payment review also offers an explicit `Pay with saved PayPal wallet` option for connected users; PayPal may complete that order directly without another hosted approval screen, or request payer action and return an approval link. PathGuard's risk decision, manual review, and spending-limit checks still run first. This is a Sandbox feature; live use requires separate PayPal eligibility and configuration.
 
 The checkout flow is:
 
@@ -249,7 +249,7 @@ Revoke the saved PayPal payment token and disconnect the authenticated user's wa
 
 ### POST `/api/payments/{payment_id}/paypal/create`
 
-Create a PayPal Sandbox order for `ALLOW` payments or `REVIEW` payments explicitly approved by a human reviewer. `BLOCK` and unapproved `REVIEW` payments are rejected.
+Create a PayPal Sandbox order for `ALLOW` payments or `REVIEW` payments explicitly approved by a human reviewer. `BLOCK` and unapproved `REVIEW` payments are rejected. By default this creates the ordinary PayPal-hosted approval flow; pass `?use_saved_wallet=true` only when the user explicitly selects the saved-wallet option. That option requires a connected wallet and may complete server-side.
 
 ### GET `/api/reviews`
 
