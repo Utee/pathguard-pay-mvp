@@ -661,7 +661,7 @@ async def sync_paypal_order(
         result = await _refresh_paypal_order(db, payment, order)
 
         if result.get("status") == "PAYPAL_REAUTH_REQUIRED":
-            replacement = await _create_or_replace_paypal_order(db, payment, order)
+            replacement = await _create_or_replace_paypal_order(db, payment, order, use_saved_wallet=False)
             return {
                 **result,
                 "paypal_order_id": replacement.paypal_order_id,
@@ -822,13 +822,20 @@ async def create_paypal_order(
                 payment.status = "COMPLETED"
                 payment.limit_reservation_expires_at = None
                 db.commit()
-            else:
                 return PayPalCreateResponse(
                     payment_id=payment.id,
                     paypal_order_id=existing.paypal_order_id,
                     status=existing.status,
                     approval_url=existing.approval_url,
+                    capture_id=existing.capture_id,
                 )
+            return PayPalCreateResponse(
+                payment_id=payment.id,
+                paypal_order_id=existing.paypal_order_id,
+                status=existing.status,
+                approval_url=existing.approval_url,
+                capture_id=existing.capture_id,
+            )
         except PayPalResourceNotFound:
             existing.status = "STALE"
             _audit(
