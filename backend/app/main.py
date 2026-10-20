@@ -5,6 +5,7 @@ from app.api.auth import router as auth_router
 from app.api.intelligence import router as intelligence_router
 from app.api.limits import router as limits_router
 from app.api.payments import router as payments_router
+from app.api.paypal_connection import router as paypal_connection_router
 from app.api.reviews import router as reviews_router
 from app.core.config import get_settings
 from app.db import initialize_database
@@ -33,6 +34,7 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(intelligence_router)
 app.include_router(payments_router)
+app.include_router(paypal_connection_router)
 app.include_router(limits_router)
 app.include_router(reviews_router)
 

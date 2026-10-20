@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     paypal_client_id: str | None = None
 
     paypal_client_secret: str | None = None
+    paypal_vault_encryption_key: str | None = None
 
     # Sandbox:
     # https://api-m.sandbox.paypal.com
@@ -61,6 +62,12 @@ class Settings(BaseSettings):
     # after PayPal approval/cancellation.
     paypal_frontend_url: str = (
         "http://localhost:5173"
+    )
+    paypal_connection_return_url: str = (
+        "http://127.0.0.1:8000/api/paypal/connection/return"
+    )
+    paypal_connection_cancel_url: str = (
+        "http://127.0.0.1:8000/api/paypal/connection/cancel"
     )
 
     # ---------------------------------------------------------

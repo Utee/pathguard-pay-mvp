@@ -20,6 +20,7 @@ AI payment safety layer for PayPal Sandbox.
 14. Provides reviewer/admin roles for human review and organization-wide operational metrics.
 15. Detects recurring PayPal errors, stale checkouts, and spikes in policy/risk blocks from audit events.
 16. Offers on-demand OpenRouter summaries with a deterministic fallback and an in-app notification feed.
+17. Allows each user to connect or disconnect a PayPal Sandbox wallet through PayPal Vault and uses saved-wallet tokens only after PathGuard approves the payment.
 
 > No real money is moved by this project. PayPal integration is intended for the Sandbox.
 
@@ -61,6 +62,14 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
 Copy the generated value into `JWT_SECRET_KEY` in `backend/.env`. Do not use the example file's blank value or commit your real `.env` file. The backend refuses to issue or validate access tokens until the signing key is configured.
+
+For encrypted storage of a saved PayPal wallet, also generate a Fernet key after installing requirements:
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+Copy it into `PAYPAL_VAULT_ENCRYPTION_KEY`. Keep this key stable and private; without it, PathGuard cannot decrypt saved wallet tokens. Set `PAYPAL_CONNECTION_RETURN_URL` and `PAYPAL_CONNECTION_CANCEL_URL` to public backend callback URLs when testing on a hosted deployment.
 
 Windows PowerShell:
 
@@ -150,6 +159,8 @@ The backend uses PayPal's Sandbox REST base URL:
 
 `https://api-m.sandbox.paypal.com`
 
+Users can connect a PayPal Sandbox wallet from the dashboard. PathGuard creates a PayPal Vault setup token, redirects the buyer to PayPal to authorize storing the wallet, then exchanges the approved setup token for a reusable payment token. The token is encrypted at rest and is never returned by the API. Enable `Accept payments` and `Vault` in the Sandbox REST app's Advanced options. By default, a payment still uses the standard PayPal Checkout approval redirect. The payment review also offers an explicit `Pay with saved PayPal wallet` option for connected users; PayPal may complete that order directly without another hosted approval screen, or request payer action and return an approval link. PathGuard's risk decision, manual review, and spending-limit checks still run first. This is a Sandbox feature; live use requires separate PayPal eligibility and configuration.
+
 The checkout flow is:
 
 ```text
@@ -224,9 +235,21 @@ Return persistent payment history and aggregate amount statistics for a recipien
 
 Return the audit timeline for a payment attempt.
 
+### GET `/api/paypal/connection`
+
+Return the current user's PayPal wallet connection status without exposing the saved payment token.
+
+### POST `/api/paypal/connection/setup`
+
+Create a PayPal Vault setup token and return the PayPal-hosted approval URL.
+
+### DELETE `/api/paypal/connection`
+
+Revoke the saved PayPal payment token and disconnect the authenticated user's wallet.
+
 ### POST `/api/payments/{payment_id}/paypal/create`
 
-Create a PayPal Sandbox order for `ALLOW` payments or `REVIEW` payments explicitly approved by a human reviewer. `BLOCK` and unapproved `REVIEW` payments are rejected.
+Create a PayPal Sandbox order for `ALLOW` payments or `REVIEW` payments explicitly approved by a human reviewer. `BLOCK` and unapproved `REVIEW` payments are rejected. By default this creates the ordinary PayPal-hosted approval flow; pass `?use_saved_wallet=true` only when the user explicitly selects the saved-wallet option. That option requires a connected wallet and may complete server-side.
 
 ### GET `/api/reviews`
 

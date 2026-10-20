@@ -16,6 +16,7 @@ from app.models import (
     RiskAssessment,
     ReviewEvent,
     UserAccount,
+    PayPalWalletConnection,
 )
 from app.schemas.payment import (
     AnalyzePaymentRequest,
@@ -32,6 +33,7 @@ from app.services.paypal import (
     PayPalResourceNotFound,
 )
 from app.services.risk_engine import assess_payment
+from app.services.paypal_vault import PayPalVaultConfigurationError, decrypt_payment_token
 from app.services.spending_limits import (
     ANALYSIS_RESERVATION_MINUTES,
     PAYPAL_RESERVATION_HOURS,
@@ -183,41 +185,82 @@ async def _create_or_replace_paypal_order(
     db: Session,
     payment: PaymentRequest,
     order: PayPalOrder | None = None,
+    *,
+    use_saved_wallet: bool = True,
 ) -> PayPalOrder:
     """Create a PayPal order, replacing a stale local order record when needed."""
+    vault_id = None
+    connection = None
+    if use_saved_wallet and payment.user_id:
+        connection = (
+            db.query(PayPalWalletConnection)
+            .filter(
+                PayPalWalletConnection.user_id == payment.user_id,
+                PayPalWalletConnection.payment_token_ciphertext.is_not(None),
+            )
+            .first()
+        )
+    if connection and connection.payment_token_ciphertext:
+        try:
+            vault_id = decrypt_payment_token(connection.payment_token_ciphertext)
+        except PayPalVaultConfigurationError as exc:
+            raise PayPalError(str(exc)) from exc
+
     data = await PayPalClient().create_order(
         amount=payment.amount,
         currency=payment.currency,
         description=payment.purpose or f"Payment to {payment.recipient_name}",
         reference_id=f"pathguard-payment-{payment.id}",
+        vault_id=vault_id,
     )
 
     paypal_order_id = data.get("id")
     approval_url = _paypal_approval_url(data)
-    if not paypal_order_id or not approval_url:
+    paypal_status = data.get("status", "CREATED")
+    if not paypal_order_id or (not approval_url and paypal_status != "COMPLETED"):
         raise PayPalError("PayPal did not return a usable order ID and approval URL.")
 
     if order is None:
         order = PayPalOrder(payment_request_id=payment.id)
         db.add(order)
 
+    capture_id = _extract_capture_id(data)
     order.paypal_order_id = paypal_order_id
-    order.status = data.get("status", "CREATED")
+    order.status = paypal_status
     order.approval_url = approval_url
-    order.capture_id = None
-    order.captured_at = None
+    order.capture_id = capture_id
+    order.captured_at = datetime.now(timezone.utc) if paypal_status == "COMPLETED" else None
 
-    payment.status = "PAYPAL_PENDING_APPROVAL"
-    payment.limit_reservation_expires_at = datetime.now(timezone.utc) + timedelta(
-        hours=PAYPAL_RESERVATION_HOURS
-    )
-    _audit(
-        db,
-        payment,
-        "PAYPAL_ORDER_CREATED",
-        "PayPal order created.",
-        metadata={"paypal_order_id": paypal_order_id},
-    )
+    if paypal_status == "COMPLETED":
+        payment.status = "COMPLETED"
+        payment.limit_reservation_expires_at = None
+        _audit(
+            db,
+            payment,
+            "PAYMENT_COMPLETED",
+            "PayPal completed the payment using the saved wallet after PathGuard approval.",
+            metadata={
+                "paypal_order_id": paypal_order_id,
+                "capture_id": capture_id,
+                "saved_wallet": bool(vault_id),
+            },
+        )
+    else:
+        payment.status = "PAYPAL_PENDING_APPROVAL"
+        payment.limit_reservation_expires_at = datetime.now(timezone.utc) + timedelta(
+            hours=PAYPAL_RESERVATION_HOURS
+        )
+        _audit(
+            db,
+            payment,
+            "PAYPAL_ORDER_CREATED",
+            "PayPal order created.",
+            metadata={
+                "paypal_order_id": paypal_order_id,
+                "saved_wallet": bool(vault_id),
+            },
+        )
+
     db.commit()
     db.refresh(order)
     return order
@@ -509,7 +552,7 @@ async def paypal_return(token: str | None = None, db: Session = Depends(get_db))
         result = await _refresh_paypal_order(db, payment, order)
 
         if result.get("status") == "PAYPAL_REAUTH_REQUIRED":
-            replacement = await _create_or_replace_paypal_order(db, payment, order)
+            replacement = await _create_or_replace_paypal_order(db, payment, order, use_saved_wallet=False)
             return _frontend_redirect(
                 "/",
                 paypal="reauth",
@@ -618,7 +661,7 @@ async def sync_paypal_order(
         result = await _refresh_paypal_order(db, payment, order)
 
         if result.get("status") == "PAYPAL_REAUTH_REQUIRED":
-            replacement = await _create_or_replace_paypal_order(db, payment, order)
+            replacement = await _create_or_replace_paypal_order(db, payment, order, use_saved_wallet=False)
             return {
                 **result,
                 "paypal_order_id": replacement.paypal_order_id,
@@ -741,6 +784,7 @@ def payment_audit(
 @router.post("/{payment_id}/paypal/create", response_model=PayPalCreateResponse)
 async def create_paypal_order(
     payment_id: int,
+    use_saved_wallet: bool = False,
     db: Session = Depends(get_db),
     current_user: UserAccount = Depends(get_current_user),
 ):
@@ -750,6 +794,21 @@ async def create_paypal_order(
 
     _ensure_payment_can_use_paypal(payment)
 
+    if use_saved_wallet:
+        connection = (
+            db.query(PayPalWalletConnection)
+            .filter(
+                PayPalWalletConnection.user_id == current_user.id,
+                PayPalWalletConnection.payment_token_ciphertext.is_not(None),
+            )
+            .first()
+        )
+        if not connection:
+            raise HTTPException(
+                status_code=409,
+                detail="Connect a PayPal wallet in account settings before choosing saved-wallet payment.",
+            )
+
     existing = payment.paypal_order
 
     if existing and existing.status == "COMPLETED":
@@ -758,6 +817,7 @@ async def create_paypal_order(
             paypal_order_id=existing.paypal_order_id,
             status=existing.status,
             approval_url=existing.approval_url,
+            capture_id=existing.capture_id,
         )
 
     _enforce_current_spending_limits(
@@ -778,13 +838,20 @@ async def create_paypal_order(
                 payment.status = "COMPLETED"
                 payment.limit_reservation_expires_at = None
                 db.commit()
-            else:
                 return PayPalCreateResponse(
                     payment_id=payment.id,
                     paypal_order_id=existing.paypal_order_id,
                     status=existing.status,
                     approval_url=existing.approval_url,
+                    capture_id=existing.capture_id,
                 )
+            return PayPalCreateResponse(
+                payment_id=payment.id,
+                paypal_order_id=existing.paypal_order_id,
+                status=existing.status,
+                approval_url=existing.approval_url,
+                capture_id=existing.capture_id,
+            )
         except PayPalResourceNotFound:
             existing.status = "STALE"
             _audit(
@@ -799,7 +866,12 @@ async def create_paypal_order(
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     try:
-        order = await _create_or_replace_paypal_order(db, payment, existing)
+        order = await _create_or_replace_paypal_order(
+            db,
+            payment,
+            existing,
+            use_saved_wallet=use_saved_wallet,
+        )
     except PayPalError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -808,6 +880,7 @@ async def create_paypal_order(
         paypal_order_id=order.paypal_order_id,
         status=order.status,
         approval_url=order.approval_url,
+        capture_id=order.capture_id,
     )
 
 
