@@ -16,6 +16,7 @@ import {
   AlertTriangle,
   TrendingUp,
   CircleDollarSign,
+  Bell,
   Link2,
   Unlink,
 } from 'lucide-react';
@@ -65,6 +66,7 @@ function App() {
   const [authPassword, setAuthPassword] = useState('');
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState('');
+  const [activeTab, setActiveTab] = useState('overview');
   const [instruction, setInstruction] = useState('');
   const [payment, setPayment] = useState(null);
   const [history, setHistory] = useState([]);
@@ -360,12 +362,12 @@ function App() {
     setIncidents([]);
     setNotifications([]);
     setIntelligenceSummary(null);
-    setSummaryError('');
-    setLimitsInitialized(false);
-    setLimitSummary(null);
     setPaypalConnection({ connected: false, status: 'not_connected' });
     setPaypalConnectionNotice('');
     setPaypalConnectionError('');
+    setSummaryError('');
+    setLimitsInitialized(false);
+    setLimitSummary(null);
   }
 
   async function decideReview(item, action) {
@@ -616,13 +618,25 @@ function App() {
   if (!user) {
     return (
       <div className="auth-shell">
-        <form className="auth-card" onSubmit={submitAuth}>
-          <div className="logo"><ShieldCheck /></div>
-          <div className="eyebrow">PATHGUARD PAY</div>
-          <h1>{authMode === 'register' ? 'Create your account' : 'Welcome back'}</h1>
+        <div className="auth-layout">
+          <section className="auth-story">
+            <div className="brand auth-brand"><div className="logo"><ShieldCheck /></div><div><b>PathGuard Pay</b><small>Payment protection</small></div></div>
+            <span className="auth-overline">A safer way to pay</span>
+            <h1>Know what happens before money moves.</h1>
+            <p>PathGuard checks each payment request against risk signals and your spending limits before it reaches checkout.</p>
+            <div className="auth-steps">
+              <Step n="01" t="Describe the payment" d="Tell the payment agent who you are paying and why." />
+              <Step n="02" t="Review the decision" d="See the recipient, amount and safety checks in one place." />
+              <Step n="03" t="Continue with confidence" d="Approved payments can continue to PayPal checkout." />
+            </div>
+            <small className="auth-sandbox"><ShieldCheck /> PayPal Sandbox · No real money is moved</small>
+          </section>
+          <form className="auth-card" onSubmit={submitAuth}>
+          <div className="eyebrow">YOUR ACCOUNT</div>
+          <h2>{authMode === 'register' ? 'Create your account' : 'Sign in'}</h2>
           <p>{authMode === 'register'
             ? 'Your payments and spending limits are private to your account.'
-            : 'Sign in to review payment risk and manage your personal spending limits.'}</p>
+            : 'Enter your details to continue to PathGuard Pay.'}</p>
           {authMode === 'register' && (
             <label className="auth-field">Display name
               <input autoComplete="name" required maxLength={120} value={authName} onChange={(event) => setAuthName(event.target.value)} />
@@ -645,7 +659,8 @@ function App() {
           }}>
             {authMode === 'register' ? 'Already have an account? Sign in' : 'New to PathGuard Pay? Create an account'}
           </button>
-        </form>
+          </form>
+        </div>
       </div>
     );
   }
@@ -657,17 +672,33 @@ function App() {
           <div className="logo"><ShieldCheck /></div>
           <div>
             <b>PathGuard Pay</b>
-            <small>AI payment safety layer</small>
+            <small>Payment protection workspace</small>
           </div>
         </div>
+        <nav className="workspace-nav" aria-label="Main navigation">
+          <button className={activeTab === 'overview' ? 'nav-active' : ''} onClick={() => setActiveTab('overview')}><Activity /> Overview</button>
+          <button className={activeTab === 'activity' ? 'nav-active' : ''} onClick={() => setActiveTab('activity')}><History /> Activity</button>
+          <button className={activeTab === 'notifications' ? 'nav-active' : ''} onClick={() => setActiveTab('notifications')}><Bell /> Notifications{notifications.length > 0 && <span className="nav-count">{notifications.length}</span>}</button>
+        </nav>
         <div className="account-controls">
-          <span className="account-label">{user.display_name} · {user.role}</span>
+          <span className="user-avatar">{(user.display_name || 'U').slice(0, 1).toUpperCase()}</span>
+          <span className="account-label"><b>{user.display_name}</b><small>{user.role}</small></span>
           <button className="signout" onClick={signOut}>Sign out</button>
         </div>
-        <span className="sandbox">● PayPal Sandbox</span>
       </header>
 
-      <main>
+      <main className={activeTab !== 'overview' ? 'single-view' : ''}>
+        {activeTab === 'activity' ? <section className="tab-page">
+          <div className="page-heading"><div className="eyebrow">PAYMENTS</div><h1>Activity</h1><p>Review your recent payment requests and their status.</p></div>
+          <div className="card info activity-page"><h3><History /> Recent activity</h3>
+            {history.length ? history.map((x) => { const meta = statusMeta(x.status); return <div className="row" key={x.id}><div className={`status ${meta.tone}`}>{meta.icon}</div><div><b>{x.recipient}</b><small>{x.purpose || 'Payment'}</small><span className="activity-status">{meta.label}</span></div><strong>{x.currency} {Number(x.amount).toLocaleString()}</strong></div>; }) : <p className="muted">Your payment activity will appear here.</p>}
+          </div>
+        </section> : activeTab === 'notifications' ? <section className="tab-page">
+          <div className="page-heading"><div className="eyebrow">ACCOUNT UPDATES</div><h1>Notifications</h1><p>Recent payment and policy events from your account.</p></div>
+          <div className="card info notifications-page"><h3><Bell /> Recent notifications <span className="queue-count">{notifications.length}</span></h3>
+            {notifications.length ? notifications.map((item) => <div className="notification-item" key={item.id}><span className={`notification-dot ${item.severity}`}></span><div className="notification-content"><div className="notification-title-row"><b>{item.title}</b><span className={`incident-severity ${item.severity}`}>{item.severity}</span></div><p>{item.message}</p><small>{item.recipient} · {item.currency} {Number(item.amount).toLocaleString()} · {item.created_at ? new Date(item.created_at).toLocaleString() : ''}</small></div></div>) : <p className="muted">No recent notifications.</p>}
+          </div>
+        </section> : <>
         <section>
           {paypalResult?.state === 'completed' && (
             <div className="result-card completed">
@@ -739,19 +770,18 @@ function App() {
             </div>
           )}
 
-          <div className="eyebrow">AI PAYMENT AGENT</div>
-          <h1>Think before the AI pays.</h1>
+          <div className="welcome-row"><div><div className="eyebrow">PAYMENTS OVERVIEW <span className="live-dot" /> LIVE WORKSPACE</div>
+          <h1>Payment command center</h1></div><span className="sandbox"><i /> PayPal Sandbox</span></div>
           <p className="intro">
-            Tell the payment agent what you want to pay. PathGuard checks the intent
-            and transaction risk before PayPal moves the money.
+            Create a payment request and review its safety decision before checkout.
           </p>
 
           <div className="card composer">
-            <label>What would you like to pay?</label>
+            <div className="composer-heading"><div><span className="composer-icon"><ArrowRight /></span><span><label>New payment request</label><small>Describe the payment in your own words</small></span></div><span className="secure-label"><ShieldCheck /> PROTECTED</span></div>
             <textarea
               value={instruction}
               onChange={(e) => setInstruction(e.target.value)}
-              placeholder={'Try: "Pay John $200 for the website"'}
+              placeholder={'For example: “Pay Jordan $240 for the brand identity project”'}
               onKeyDown={(e) => {
                 if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') analyze();
               }}
@@ -825,7 +855,7 @@ function App() {
                   ? <><Unlink /> Disconnect PayPal</>
                   : <><Link2 /> Connect PayPal</>}
             </button>
-            <small className="limits-footnote">Connecting a wallet is separate from PathGuard approval. Every payment still passes risk checks, manual review when required, and your spending limits. A saved wallet may be charged without a separate PayPal checkout confirmation for every payment; use the connection only if you consent to that flow.</small>
+            <small className="limits-footnote">Connecting a wallet is separate from PathGuard approval. Every payment still passes risk checks, manual review when required, and your spending limits. A saved wallet may be charged without a separate PayPal checkout confirmation for every payment; use this connection only if you consent to that flow.</small>
           </div>
 
           <div className="card info limits-card">
@@ -940,33 +970,6 @@ function App() {
             <small className="limits-footnote">Signals are based on recorded audit events, not predictions. Suggested actions are guidance only; they never bypass risk decisions or spending limits.</small>
           </div>
 
-          <div className="card info">
-            <h3><History /> Notifications <span className="queue-count">{notifications.length}</span></h3>
-            <p className="limits-intro">Recent payment and policy events from your account audit trail.</p>
-            {notifications.length ? notifications.slice(0, 8).map((item) => (
-              <div className="notification-item" key={item.id}>
-                <span className={`notification-dot ${item.severity}`}></span>
-                <div className="notification-content">
-                  <div className="notification-title-row">
-                    <b>{item.title}</b>
-                    <span className={`incident-severity ${item.severity}`}>{item.severity}</span>
-                  </div>
-                  <p>{item.message}</p>
-                  <small>{item.recipient} · {item.currency} {Number(item.amount).toLocaleString()} · {item.created_at ? new Date(item.created_at).toLocaleString() : ''}</small>
-                </div>
-              </div>
-            )) : <p className="muted">No recent notifications. PathGuard will surface important risk, policy, and payment events here.</p>}
-            <small className="limits-footnote">This is an in-app feed derived from audit events; email and push notifications are not configured in this MVP.</small>
-          </div>
-
-          <div className="card info">
-            <h3><ShieldCheck /> How PathGuard works</h3>
-            <Step n="01" t="Understand" d="AI turns your request into structured payment intent." />
-            <Step n="02" t="Check" d="PathGuard evaluates recipient and amount risk." />
-            <Step n="03" t="Decide" d="The payment gets Allow, Review, or Block." />
-            <Step n="04" t="Pay" d="Only approved payments continue to PayPal." />
-          </div>
-
           {['reviewer', 'admin'].includes(user.role) && <div className="card info">
             <h3><Clock3 /> Human review queue <span className="queue-count">{reviewQueue.length}</span></h3>
             {reviewQueue.length ? reviewQueue.map((item) => (
@@ -987,28 +990,8 @@ function App() {
             )) : <p className="muted">No payments are waiting for review.</p>}
           </div>}
 
-          <div className="card info">
-            <h3><History /> Recent activity</h3>
-            {history.length ? (
-              history.slice(0, 7).map((x) => {
-                const meta = statusMeta(x.status);
-                return (
-                  <div className="row" key={x.id}>
-                    <div className={`status ${meta.tone}`}>{meta.icon}</div>
-                    <div>
-                      <b>{x.recipient}</b>
-                      <small>{x.purpose || 'Payment'}</small>
-                      <span className="activity-status">{meta.label}</span>
-                    </div>
-                    <strong>{x.currency} {Number(x.amount).toLocaleString()}</strong>
-                  </div>
-                );
-              })
-            ) : (
-              <p className="muted">Your payment activity will appear here.</p>
-            )}
-          </div>
         </aside>
+        </>}
       </main>
 
       <footer>PathGuard Pay · AI → PathGuard → PayPal</footer>
