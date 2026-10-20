@@ -211,6 +211,11 @@ function App() {
     const q = new URLSearchParams(window.location.search);
     const paypalState = q.get('paypal');
     const paypalConnectState = q.get('paypal_connect');
+    const paypalConnectReason = q.get('reason');
+    const paypalStatus = q.get('paypal_status');
+    const paypalCode = q.get('paypal_code');
+    const paypalIssue = q.get('paypal_issue');
+    const paypalDebugId = q.get('paypal_debug_id');
     const paypalToken = q.get('token');
     const paymentId = q.get('payment_id');
     const orderId = q.get('order_id');
@@ -225,7 +230,26 @@ function App() {
       setPaypalConnectionNotice('PayPal wallet connection was cancelled. No new wallet was saved.');
       setPaypalConnectionError('');
     } else if (paypalConnectState === 'error') {
-      setPaypalConnectionError('Could not connect PayPal. Confirm Vault is enabled in your Sandbox REST app and that the vault encryption key is configured.');
+      let diagnostic = 'PayPal wallet connection failed.';
+      if (paypalConnectReason === 'paypal_token_exchange_failed') {
+        const errorParts = [paypalStatus && `HTTP ${paypalStatus}`, paypalCode, paypalIssue].filter(Boolean);
+        diagnostic = `PayPal approved the connection, but could not save the wallet${errorParts.length ? ` (${errorParts.join(' / ')})` : ''}.`;
+        if (paypalDebugId) diagnostic += ` PayPal Debug ID: ${paypalDebugId}.`;
+        diagnostic += ' Check that the Sandbox app has Vault access and that its API permissions allow payment-token creation.';
+      } else if (paypalConnectReason === 'missing_return_token') {
+        diagnostic = 'PayPal returned to PathGuard without a setup-token identifier. Retry the wallet connection; if it repeats, share the backend callback logs.';
+      } else if (paypalConnectReason === 'pending_connection_not_found') {
+        diagnostic = 'PayPal returned to PathGuard, but the callback did not match the pending wallet connection. Check the callback URL and keep the backend database unchanged while retrying.';
+      } else if (paypalConnectReason === 'encryption_key_invalid') {
+        diagnostic = 'The PayPal token could not be encrypted. Verify PAYPAL_VAULT_ENCRYPTION_KEY is a valid Fernet key and has not changed since setup.';
+      } else if (paypalConnectReason === 'invalid_token_response') {
+        diagnostic = 'PayPal did not return a valid reusable wallet token. Check the backend logs for the callback error.';
+      } else if (paypalConnectReason) {
+        diagnostic = `PayPal wallet connection failed (${paypalConnectReason}). Check the backend logs for details.`;
+      } else {
+        diagnostic = 'PayPal wallet connection failed without a diagnostic code. Update the backend and frontend, then retry.';
+      }
+      setPaypalConnectionError(diagnostic);
       setPaypalConnectionNotice('');
     }
 
