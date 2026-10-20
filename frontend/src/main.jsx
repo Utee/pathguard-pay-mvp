@@ -17,6 +17,8 @@ import {
   TrendingUp,
   CircleDollarSign,
   Bell,
+  Link2,
+  Unlink,
 } from 'lucide-react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
@@ -92,6 +94,10 @@ function App() {
   const [limitsInitialized, setLimitsInitialized] = useState(false);
   const [limitsError, setLimitsError] = useState('');
   const [limitsSaved, setLimitsSaved] = useState('');
+  const [paypalConnection, setPaypalConnection] = useState({ connected: false, status: 'not_connected' });
+  const [paypalConnectionBusy, setPaypalConnectionBusy] = useState(false);
+  const [paypalConnectionNotice, setPaypalConnectionNotice] = useState('');
+  const [paypalConnectionError, setPaypalConnectionError] = useState('');
 
   async function load(account = user) {
     try {
@@ -104,6 +110,9 @@ function App() {
       } else {
         setReviewQueue([]);
       }
+
+      const paypalConnectionResponse = await apiFetch(`${API}/api/paypal/connection`);
+      if (paypalConnectionResponse.ok) setPaypalConnection(await paypalConnectionResponse.json());
 
       const configuredLimits = await apiFetch(`${API}/api/limits/settings`);
       if (configuredLimits.ok && !limitsInitialized) {
@@ -201,12 +210,24 @@ function App() {
 
     const q = new URLSearchParams(window.location.search);
     const paypalState = q.get('paypal');
+    const paypalConnectState = q.get('paypal_connect');
     const paypalToken = q.get('token');
     const paymentId = q.get('payment_id');
     const orderId = q.get('order_id');
     const captureId = q.get('capture_id');
     const message = q.get('message');
     const approvalUrl = q.get('approval_url');
+
+    if (paypalConnectState === 'connected') {
+      setPaypalConnectionNotice('PayPal wallet connected. PathGuard can now use this saved Sandbox wallet after a payment passes its risk and spending-limit checks.');
+      setPaypalConnectionError('');
+    } else if (paypalConnectState === 'cancelled') {
+      setPaypalConnectionNotice('PayPal wallet connection was cancelled. No new wallet was saved.');
+      setPaypalConnectionError('');
+    } else if (paypalConnectState === 'error') {
+      setPaypalConnectionError('Could not connect PayPal. Confirm Vault is enabled in your Sandbox REST app and that the vault encryption key is configured.');
+      setPaypalConnectionNotice('');
+    }
 
     const savedPaymentId = localStorage.getItem('pathguard_paypal_payment_id');
     const effectivePaymentId = paymentId || savedPaymentId;
@@ -341,6 +362,9 @@ function App() {
     setIncidents([]);
     setNotifications([]);
     setIntelligenceSummary(null);
+    setPaypalConnection({ connected: false, status: 'not_connected' });
+    setPaypalConnectionNotice('');
+    setPaypalConnectionError('');
     setSummaryError('');
     setLimitsInitialized(false);
     setLimitSummary(null);
@@ -429,6 +453,43 @@ function App() {
     }
   }
 
+  async function connectPaypal() {
+    setPaypalConnectionBusy(true);
+    setPaypalConnectionError('');
+    setPaypalConnectionNotice('');
+    try {
+      const response = await apiFetch(`${API}/api/paypal/connection/setup`, {
+        method: 'POST',
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Could not start PayPal connection.');
+      if (!data.approval_url) throw new Error('PayPal did not return a wallet approval URL.');
+      window.location.href = data.approval_url;
+    } catch (error) {
+      setPaypalConnectionError(error.message || 'Could not connect PayPal.');
+      setPaypalConnectionBusy(false);
+    }
+  }
+
+  async function disconnectPaypal() {
+    setPaypalConnectionBusy(true);
+    setPaypalConnectionError('');
+    setPaypalConnectionNotice('');
+    try {
+      const response = await apiFetch(`${API}/api/paypal/connection`, {
+        method: 'DELETE',
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Could not disconnect PayPal.');
+      setPaypalConnection(data);
+      setPaypalConnectionNotice('PayPal wallet disconnected and its saved token was revoked.');
+    } catch (error) {
+      setPaypalConnectionError(error.message || 'Could not disconnect PayPal.');
+    } finally {
+      setPaypalConnectionBusy(false);
+    }
+  }
+
   async function generateSummary() {
     setSummaryLoading(true);
     setSummaryError('');
@@ -502,11 +563,35 @@ function App() {
         },
       }));
 
+      if (d.status === 'COMPLETED') {
+        localStorage.removeItem('pathguard_paypal_payment_id');
+        setPayment((current) => ({
+          ...current,
+          status: 'COMPLETED',
+          paypal: {
+            ...(current?.paypal || {}),
+            paypal_order_id: d.paypal_order_id,
+            status: d.status,
+            capture_id: d.capture_id,
+          },
+        }));
+        setPaypalResult({
+          state: 'completed',
+          paymentId: d.payment_id,
+          orderId: d.paypal_order_id,
+          captureId: d.capture_id,
+        });
+        setPayLoading(false);
+        await restorePayment(payment.payment_id);
+        load();
+        return;
+      }
+
       if (d.approval_url) {
         localStorage.setItem('pathguard_paypal_payment_id', String(payment.payment_id));
         window.location.href = d.approval_url;
       } else {
-        throw new Error('No PayPal approval URL returned');
+        throw new Error('PayPal did not return an approval URL or a completed payment status');
       }
     } catch (e) {
       setError(e.message || 'PayPal order failed');
@@ -741,6 +826,38 @@ function App() {
         </section>
 
         <aside>
+          <div className="card info limits-card paypal-connection-card">
+            <h3><Link2 /> PayPal account</h3>
+            {paypalConnection.connected ? (
+              <>
+                <div className="paypal-connection-state">
+                  <CheckCircle2 />
+                  <div>
+                    <b>Sandbox wallet connected</b>
+                    <small>{paypalConnection.email_address || 'Your PayPal wallet is linked to this PathGuard account.'}</small>
+                  </div>
+                </div>
+                <p className="limits-intro">After PathGuard approves a payment, the saved wallet can be used to complete it. PayPal may still redirect you when additional payer action is required.</p>
+              </>
+            ) : (
+              <p className="limits-intro">Connect your PayPal Sandbox wallet once. PayPal will ask you to sign in and authorize saving the wallet for future payments.</p>
+            )}
+            {paypalConnectionError && <div className="error limits-feedback">{paypalConnectionError}</div>}
+            {paypalConnectionNotice && <p className="limits-saved">{paypalConnectionNotice}</p>}
+            <button
+              className={paypalConnection.connected ? 'signout paypal-disconnect' : 'primary limits-save'}
+              disabled={paypalConnectionBusy}
+              onClick={paypalConnection.connected ? disconnectPaypal : connectPaypal}
+            >
+              {paypalConnectionBusy
+                ? <><Loader2 className="spin" /> {paypalConnection.connected ? 'Disconnecting…' : 'Connecting to PayPal…'}</>
+                : paypalConnection.connected
+                  ? <><Unlink /> Disconnect PayPal</>
+                  : <><Link2 /> Connect PayPal</>}
+            </button>
+            <small className="limits-footnote">Connecting a wallet is separate from PathGuard approval. Every payment still passes risk checks, manual review when required, and your spending limits. A saved wallet may be charged without a separate PayPal checkout confirmation for every payment; use this connection only if you consent to that flow.</small>
+          </div>
+
           <div className="card info limits-card">
             <h3><Settings2 /> Spending limits</h3>
             <p className="limits-intro">Set your budget before paying. PathGuard checks these caps before creating a PayPal order and again before capture.</p>
