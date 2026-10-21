@@ -738,7 +738,7 @@ function App() {
           <button className={activeTab === 'security' ? 'nav-active' : ''} onClick={() => setActiveTab('security')}><ShieldCheck /> Security & limits</button>
           <button className={activeTab === 'wallet' ? 'nav-active' : ''} onClick={() => setActiveTab('wallet')}><Wallet /> Payment methods</button>
           <button className={activeTab === 'notifications' ? 'nav-active' : ''} onClick={() => setActiveTab('notifications')}><Bell /> Notifications{notifications.length > 0 && <span className="nav-count">{notifications.length}</span>}</button>
-          {user.role === 'admin' && <button className={activeTab === 'admin' ? 'nav-active' : ''} onClick={() => setActiveTab('admin')}><Users /> Admin</button>
+          {user.role === 'admin' && <button className={activeTab === 'admin' ? 'nav-active' : ''} onClick={() => setActiveTab('admin')}><Users /> Admin</button>}
         </nav>
         <div className="account-controls">
           <span className="user-avatar">{(user.display_name || 'U').slice(0, 1).toUpperCase()}</span>
