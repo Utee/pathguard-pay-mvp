@@ -8,7 +8,7 @@ from app.schemas.payment import PaymentIntent
 settings = get_settings()
 
 _AMOUNT_RE = re.compile(
-    r"(?:(?:\\$|USD\\s*)\\s*)?([0-9]+(?:,[0-9]{3})*(?:\\.[0-9]+)?)\\s*(?:USD|dollars?)?",
+    r"(?:(?:\$|USD\s*)\s*)?([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?)\s*(?:USD|dollars?)?",
     re.IGNORECASE,
 )
 
@@ -35,7 +35,7 @@ def _local_parse(instruction: str) -> PaymentIntent:
 
     before_amount = text[: amount_match.start()].strip()
     recipient_match = re.search(
-        r"\\b(?:pay|send|transfer)\\s+(?:to\\s+)?(.+?)\\s*$",
+        r"\b(?:pay|send|transfer)\s+(?:to\s+)?(.+?)\s*$",
         before_amount,
         re.IGNORECASE,
     )
@@ -47,7 +47,7 @@ def _local_parse(instruction: str) -> PaymentIntent:
         )
 
     recipient = recipient_match.group(1).strip(" ,")
-    recipient = re.sub(r"\\s+", " ", recipient)
+    recipient = re.sub(r"\s+", " ", recipient)
 
     if recipient.lower() in {"me", "someone", "somebody", "unknown", "the website"}:
         raise ValueError("Could not identify a valid payment recipient.")
@@ -56,7 +56,7 @@ def _local_parse(instruction: str) -> PaymentIntent:
         raise ValueError("Could not identify a valid payment recipient.")
 
     purpose_match = re.search(
-        r"\\b(?:for|of)\\s+(.+)$",
+        r"\b(?:for|of)\s+(.+)$",
         text[amount_match.end():],
         re.IGNORECASE,
     )
