@@ -859,6 +859,11 @@ function App() {
         </section>
 
         <aside className="workspace-panels" style={{ display: ['overview', 'security', 'wallet', 'intelligence'].includes(activeTab) ? undefined : 'none' }}>
+          {activeTab !== 'overview' && <div className="page-heading panel-page-heading">
+            <div className="eyebrow">{activeTab === 'wallet' ? 'CONNECTED ACCOUNTS' : activeTab === 'security' ? 'PAYMENT PROTECTION' : 'RISK & OPERATIONS'}</div>
+            <h1>{activeTab === 'wallet' ? 'Payment methods' : activeTab === 'security' ? 'Security & limits' : 'Payment intelligence'}</h1>
+            <p>{activeTab === 'wallet' ? 'Manage the PayPal Sandbox wallet connected to your account.' : activeTab === 'security' ? 'Control your spending boundaries and see how much capacity remains.' : 'Understand payment outcomes, recurring signals, and recommended actions.'}</p>
+          </div>}
           <div className="card info limits-card paypal-connection-card" style={{ display: ['overview', 'wallet'].includes(activeTab) ? undefined : 'none' }}>
             <h3><Link2 /> PayPal account</h3>
             {paypalConnection.connected ? (
