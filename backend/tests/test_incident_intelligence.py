@@ -194,6 +194,7 @@ def test_openrouter_summary_uses_aggregate_only_context(monkeypatch):
         lambda: SimpleNamespace(
             openrouter_api_key="test-only-key",
             openrouter_model="test/model",
+            openrouter_base_url="https://openrouter.ai/api/v1",
         ),
     )
 
