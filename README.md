@@ -21,6 +21,7 @@ AI payment safety layer for PayPal Sandbox.
 15. Detects recurring PayPal errors, stale checkouts, and spikes in policy/risk blocks from audit events.
 16. Offers on-demand OpenRouter summaries with a deterministic fallback and an in-app notification feed.
 17. Allows each user to connect or disconnect a PayPal Sandbox wallet through PayPal Vault and uses saved-wallet tokens only after PathGuard approves the payment.
+18. Builds account-scoped recipient trust profiles and flags unusually large payments, changed payment purposes, and rapid repeat payments.
 
 > No real money is moved by this project. PayPal integration is intended for the Sandbox.
 
@@ -229,7 +230,7 @@ Return a payment request, risk assessment, recipient history, review events, aud
 
 ### GET `/api/payments/recipients/{recipient_name}/history`
 
-Return persistent payment history and aggregate amount statistics for a recipient.
+Return an account-scoped recipient profile including trust-history label, completed payment count, total and average amounts, historical amount range, recent 30-day activity, and last payment date. Accepts an optional `currency` query parameter (defaults to `USD`). Recipients with no completed payment history return a `NEW` profile rather than a 404.
 
 ### GET `/api/payments/{payment_id}/audit`
 

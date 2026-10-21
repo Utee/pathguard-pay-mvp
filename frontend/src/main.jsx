@@ -161,6 +161,15 @@ function App() {
       const d = await r.json();
 
       if (r.ok && d?.id) {
+        let recipientProfile = null;
+        try {
+          const profileResponse = await apiFetch(
+            `${API}/api/payments/recipients/${encodeURIComponent(d.recipient)}/history?currency=${encodeURIComponent(d.currency || 'USD')}`
+          );
+          if (profileResponse.ok) recipientProfile = await profileResponse.json();
+        } catch {
+          // Payment restoration should still work when recipient history is unavailable.
+        }
         setPayment({
           payment_id: d.id,
           intent: {
@@ -171,6 +180,7 @@ function App() {
           },
           risk: d.risk,
           paypal: d.paypal,
+          recipient_profile: recipientProfile,
           status: d.status,
         });
       }
@@ -557,6 +567,21 @@ function App() {
           ? 'REVIEW_PENDING'
           : d.risk?.decision,
       });
+      void (async () => {
+        try {
+          const profileResponse = await apiFetch(
+            `${API}/api/payments/recipients/${encodeURIComponent(d.intent.recipient_name)}/history?currency=${encodeURIComponent(d.intent.currency || 'USD')}`
+          );
+          if (profileResponse.ok) {
+            const recipientProfile = await profileResponse.json();
+            setPayment((current) => current?.payment_id === d.payment_id
+              ? { ...current, recipient_profile: recipientProfile }
+              : current);
+          }
+        } catch {
+          // Recipient history is supplementary; the risk decision remains available.
+        }
+      })();
       load();
     } catch (e) {
       setError(e.message || 'Analysis failed');
@@ -1037,6 +1062,56 @@ function App() {
   );
 }
 
+function RecipientProfile({ profile, currency }) {
+  if (!profile) {
+    return (
+      <div className="recipient-profile recipient-profile-loading">
+        <div className="recipient-profile-heading"><ShieldCheck /><span><b>Recipient trust profile</b><small>Loading your payment history…</small></span></div>
+      </div>
+    );
+  }
+
+  const established = profile.trust_level === 'ESTABLISHED';
+  const developing = profile.trust_level === 'DEVELOPING';
+  const trustLabel = established ? 'Established history' : developing ? 'Developing history' : 'New recipient';
+  const average = Number(profile.average_amount || 0);
+  const recentAverage = profile.recent_average_amount == null ? null : Number(profile.recent_average_amount);
+  const lastPayment = profile.last_payment_at ? new Date(profile.last_payment_at).toLocaleDateString() : null;
+
+  return (
+    <div className="recipient-profile">
+      <div className="recipient-profile-heading">
+        <span className={`recipient-trust-icon ${established ? 'established' : developing ? 'developing' : 'new'}`}>
+          {established ? <ShieldCheck /> : developing ? <Activity /> : <ShieldAlert />}
+        </span>
+        <span className="recipient-trust-copy"><b>Recipient trust profile</b><small>Based on your completed payments in this currency</small></span>
+        <span className={`recipient-trust-badge ${established ? 'established' : developing ? 'developing' : 'new'}`}>{trustLabel}</span>
+      </div>
+
+      {profile.total_payments > 0 ? (
+        <>
+          <div className="recipient-profile-stats">
+            <div><small>COMPLETED PAYMENTS</small><b>{profile.total_payments}</b></div>
+            <div><small>AVERAGE AMOUNT</small><b>{currency} {average.toLocaleString(undefined, { maximumFractionDigits: 2 })}</b></div>
+            <div><small>LAST PAYMENT</small><b>{lastPayment || '—'}</b></div>
+          </div>
+          <div className="recipient-profile-range">
+            <span>Historical range</span>
+            <b>{currency} {Number(profile.minimum_amount || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })} – {Number(profile.maximum_amount || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</b>
+          </div>
+          <div className="recipient-profile-range">
+            <span>Last 30 days</span>
+            <b>{profile.recent_payments} payment(s){recentAverage == null ? '' : ` · ${currency} ${recentAverage.toLocaleString(undefined, { maximumFractionDigits: 2 })} average`}</b>
+          </div>
+        </>
+      ) : (
+        <p className="recipient-profile-empty">No completed payments to this recipient are recorded on your account yet. PathGuard treats this as a new-recipient signal, not proof of fraud.</p>
+      )}
+      <small className="recipient-profile-footnote">Trust labels describe payment history only. They do not verify the recipient’s real-world identity or guarantee a safe payment.</small>
+    </div>
+  );
+}
+
 function Step({ n, t, d }) {
   return (
     <div className="step">
@@ -1096,6 +1171,8 @@ function Risk({ payment, decision, status, loading, onPay, onPayWithSavedWallet,
         <div><small>AMOUNT</small><b>{payment?.intent?.currency || 'USD'} {amount.toLocaleString()}</b></div>
         <div><small>PURPOSE</small><b>{payment?.intent?.purpose || 'Payment'}</b></div>
       </div>
+
+      <RecipientProfile profile={payment?.recipient_profile} currency={payment?.intent?.currency || 'USD'} />
 
       <div className="reasons">
         <b><ShieldAlert /> Why PathGuard decided this</b>

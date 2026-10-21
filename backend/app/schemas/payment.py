@@ -48,9 +48,14 @@ class PayPalCaptureResponse(BaseModel):
 
 class RecipientHistoryResponse(BaseModel):
     recipient: str
+    trust_level: str = "NEW"
     total_payments: int
     total_amount: float
     average_amount: float
+    minimum_amount: float | None = None
+    maximum_amount: float | None = None
+    recent_payments: int = 0
+    recent_average_amount: float | None = None
     last_payment_at: datetime | None = None
 
 
