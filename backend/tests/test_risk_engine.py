@@ -154,3 +154,100 @@ def test_blocked_attempt_does_not_change_recipient_risk_baseline():
     assert result.risk_score == 20
     assert result.new_recipient is True
     db.close()
+
+
+def test_changed_purpose_for_established_recipient_requires_review():
+    db = make_db()
+    db.add_all([
+        PaymentRequest(
+            raw_instruction="Pay John for website design",
+            recipient_name="John",
+            amount=200,
+            currency="USD",
+            status="COMPLETED",
+            purpose="website design",
+        )
+        for _ in range(3)
+    ])
+    db.commit()
+
+    result = assess_payment(
+        db,
+        PaymentIntent(
+            recipient_name="John",
+            amount=200,
+            currency="USD",
+            purpose="urgent transfer",
+        ),
+        "Pay John $200 for an urgent transfer",
+    )
+
+    assert result.instruction_mismatch is True
+    assert result.decision == "REVIEW"
+    assert any("purpose differs" in reason for reason in result.reasons)
+    db.close()
+
+
+def test_rapid_repeat_payments_trigger_frequency_review():
+    from datetime import datetime, timedelta, timezone
+
+    db = make_db()
+    now = datetime.now(timezone.utc)
+    db.add_all([
+        PaymentRequest(
+            raw_instruction="Pay John $200 for website",
+            recipient_name="John",
+            amount=200,
+            currency="USD",
+            status="COMPLETED",
+            purpose="website",
+            created_at=now - timedelta(minutes=index + 1),
+        )
+        for index in range(5)
+    ])
+    db.commit()
+
+    result = assess_payment(
+        db,
+        PaymentIntent(
+            recipient_name="John",
+            amount=200,
+            currency="USD",
+            purpose="website",
+        ),
+        "Pay John $200 for the website",
+    )
+
+    assert result.frequency_anomaly is True
+    assert result.decision == "REVIEW"
+    assert any("last 24 hours" in reason for reason in result.reasons)
+    db.close()
+
+
+def test_recipient_baseline_ignores_other_currencies():
+    db = make_db()
+    db.add(
+        PaymentRequest(
+            raw_instruction="Pay John EUR 200",
+            recipient_name="John",
+            amount=200,
+            currency="EUR",
+            status="COMPLETED",
+            purpose="website",
+        )
+    )
+    db.commit()
+
+    result = assess_payment(
+        db,
+        PaymentIntent(
+            recipient_name="John",
+            amount=250,
+            currency="USD",
+            purpose="website",
+        ),
+        "Pay John $250 for the website",
+    )
+
+    assert result.new_recipient is True
+    db.close()
