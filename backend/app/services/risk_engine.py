@@ -87,7 +87,7 @@ def assess_payment(
                 common_prior_words = set.intersection(*prior_purposes)
                 if common_prior_words and not (common_prior_words & current_purpose):
                     instruction_mismatch = True
-                    score += 20
+                    score += 30
                     reasons.append(
                         "The payment purpose differs from the consistent purpose used "
                         "in previous completed payments to this recipient."
