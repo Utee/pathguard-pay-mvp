@@ -498,39 +498,44 @@ def list_payments(
 @router.get("/recipients/{recipient_name}/history", response_model=RecipientHistoryResponse)
 def recipient_history(
     recipient_name: str,
+    currency: str = "USD",
     db: Session = Depends(get_db),
     current_user: UserAccount = Depends(get_current_user),
 ):
-    recipient = (
-        db.query(Recipient)
-        .join(PaymentRequest, PaymentRequest.recipient_id == Recipient.id)
-        .filter(
-            Recipient.name.ilike(recipient_name),
-            PaymentRequest.user_id == current_user.id,
-            PaymentRequest.status == "COMPLETED",
-        )
-        .first()
-    )
-    if not recipient:
-        raise HTTPException(status_code=404, detail="Recipient not found")
-
+    normalized_name = recipient_name.strip()
     payments = (
         db.query(PaymentRequest)
         .filter(
-            PaymentRequest.recipient_id == recipient.id,
+            PaymentRequest.recipient_name.ilike(normalized_name),
             PaymentRequest.user_id == current_user.id,
             PaymentRequest.status == "COMPLETED",
+            PaymentRequest.currency == currency.upper(),
         )
         .order_by(PaymentRequest.created_at.desc())
         .all()
     )
-    amounts = [float(p.amount) for p in payments]
+    amounts = [float(payment.amount) for payment in payments]
+    cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+
+    def as_utc(value: datetime) -> datetime:
+        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+    recent = [payment for payment in payments if as_utc(payment.created_at) >= cutoff]
+    recent_amounts = [float(payment.amount) for payment in recent]
+    count = len(payments)
+    trust_level = "NEW" if count == 0 else "DEVELOPING" if count < 3 else "ESTABLISHED"
+
     return RecipientHistoryResponse(
-        recipient=recipient.name,
-        total_payments=len(payments),
+        recipient=payments[0].recipient_name if payments else normalized_name,
+        trust_level=trust_level,
+        total_payments=count,
         total_amount=sum(amounts),
-        average_amount=(sum(amounts) / len(amounts)) if amounts else 0.0,
-        last_payment_at=payments[0].created_at if payments else recipient.last_payment_at,
+        average_amount=(sum(amounts) / count) if count else 0.0,
+        minimum_amount=min(amounts) if amounts else None,
+        maximum_amount=max(amounts) if amounts else None,
+        recent_payments=len(recent),
+        recent_average_amount=(sum(recent_amounts) / len(recent_amounts)) if recent_amounts else None,
+        last_payment_at=payments[0].created_at if payments else None,
     )
 
 
