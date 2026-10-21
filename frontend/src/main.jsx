@@ -738,7 +738,7 @@ function App() {
           <button className={activeTab === 'security' ? 'nav-active' : ''} onClick={() => setActiveTab('security')}><ShieldCheck /> Security & limits</button>
           <button className={activeTab === 'wallet' ? 'nav-active' : ''} onClick={() => setActiveTab('wallet')}><Wallet /> Payment methods</button>
           <button className={activeTab === 'notifications' ? 'nav-active' : ''} onClick={() => setActiveTab('notifications')}><Bell /> Notifications{notifications.length > 0 && <span className="nav-count">{notifications.length}</span>}</button>
-          {user.role === 'admin' && <button className={activeTab === 'admin' ? 'nav-active' : ''} onClick={() => setActiveTab('admin')}><Users /> Admin</button>}
+          {user.role === 'admin' && <button className={activeTab === 'admin' ? 'nav-active' : ''} onClick={() => setActiveTab('admin')}><Users /> Admin</button>
         </nav>
         <div className="account-controls">
           <span className="user-avatar">{(user.display_name || 'U').slice(0, 1).toUpperCase()}</span>
@@ -1125,6 +1125,7 @@ function Step({ n, t, d }) {
   );
 }
 
+
 function formatAdminMoney(value) {
   return Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
@@ -1153,31 +1154,36 @@ function AdminDashboard() {
         apiFetch(API + '/api/admin/payments?limit=100'),
       ]);
       for (const response of responses) {
-        if (response.status === 403 || response.status === 401) throw new Error('Administrator permission is required to access this section.');
+        if (response.status === 401 || response.status === 403) {
+          throw new Error('Administrator access is required. Sign in with an active admin account.');
+        }
         if (!response.ok) throw new Error('Could not load administrator data.');
       }
-      const data = await Promise.all(responses.map((response) => response.json()));
-      setOverview(data[0]);
-      setUsers(data[1].items || []);
-      setPayments(data[2].items || []);
-    } catch (e) {
-      setError(e.message || 'Could not load administrator data.');
+      const [overviewData, usersData, paymentsData] = await Promise.all(responses.map(response => response.json()));
+      setOverview(overviewData);
+      setUsers(usersData.items || []);
+      setPayments(paymentsData.items || []);
+    } catch (err) {
+      setError(err.message || 'Could not load administrator data.');
     }
   }
 
   useEffect(() => { refresh(); }, []);
 
   async function searchUsers(event) {
-    event.preventDefault();
+    event?.preventDefault();
+    setError('');
     try {
-      const response = await apiFetch(API + '/api/admin/users?limit=100&q=' + encodeURIComponent(query));
+      const response = await apiFetch(API + '/api/admin/users?limit=100&q=' + encodeURIComponent(query.trim()));
+      if (!response.ok) throw new Error(response.status === 403 ? 'Administrator access is required.' : 'Could not search users.');
       const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || 'Could not search users.');
       setUsers(data.items || []);
-    } catch (e) { setError(e.message); }
+    } catch (err) {
+      setError(err.message || 'Could not search users.');
+    }
   }
 
-  async function updateUser(account, patch) {
+  async function updateUser(account, changes) {
     setBusyId(account.id);
     setError('');
     setNotice('');
@@ -1185,118 +1191,75 @@ function AdminDashboard() {
       const response = await apiFetch(API + '/api/admin/users/' + account.id, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(patch),
+        body: JSON.stringify(changes),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || 'Could not update user.');
-      setNotice('Updated ' + data.email + ' successfully.');
+      if (!response.ok) throw new Error(data.detail || 'Could not update this account.');
+      setNotice('Updated ' + data.email + '.');
       await refresh();
-    } catch (e) { setError(e.message || 'Could not update user.'); }
-    finally { setBusyId(null); }
+      if (query.trim()) await searchUsers();
+    } catch (err) {
+      setError(err.message || 'Could not update this account.');
+    } finally {
+      setBusyId(null);
+    }
   }
 
-  const visiblePayments = payments.filter((item) => [item.user_email, item.recipient, item.status, item.purpose].filter(Boolean).join(' ').toLowerCase().includes(paymentQuery.toLowerCase()));
-  const money = (value) => Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
-  const date = (value) => value ? new Date(value).toLocaleDateString() : '—';
+  const visiblePayments = payments.filter(item =>
+    [item.user_email, item.recipient, item.status, item.purpose, String(item.id)]
+      .filter(Boolean).join(' ').toLowerCase().includes(paymentQuery.toLowerCase())
+  );
 
   return <section className="tab-page admin-page">
-    <div className="page-heading admin-heading"><div><div className="eyebrow">PLATFORM CONTROL</div><h1>Admin dashboard</h1><p>Manage accounts and monitor every PathGuard Pay payment.</p></div><button className="admin-refresh" onClick={refresh}><RefreshCw /> Refresh data</button></div>
+    <div className="page-heading admin-heading">
+      <div><div className="eyebrow">PLATFORM CONTROL</div><h1>Admin dashboard</h1><p>Manage accounts and monitor platform-wide payment activity.</p></div>
+      <button className="admin-refresh" onClick={refresh}><RefreshCw /> Refresh data</button>
+    </div>
     {error && <div className="error"><ShieldAlert /><span>{error}</span></div>}
     {notice && <div className="admin-notice"><CheckCircle2 />{notice}</div>}
     <div className="admin-metrics">
-      {[['Registered users', overview?.users_total, Users], ['Active users', overview?.active_users, CheckCircle2], ['All payments', overview?.payments_total, History], ['Completed volume', '
-  const decisionConfig = {
-    ALLOW: ['allow', <CheckCircle2 />, 'Payment approved'],
-    REVIEW: ['review', <Clock3 />, 'Payment needs review'],
-    BLOCK: ['block', <ShieldX />, 'Payment blocked'],
-  };
-
-  const cfg = decisionConfig[decision] || ['review', <ShieldAlert />, 'Payment result'];
-  const reasons = Array.isArray(payment?.risk?.reasons) ? payment.risk.reasons : [];
-  const amount = Number(payment?.intent?.amount || 0);
-  const meta = statusMeta(status);
-
-  const canPay =
-    decision === 'ALLOW' ||
-    (decision === 'REVIEW' && status === 'REVIEW_APPROVED');
-
-  let message = 'Review the payment details before continuing.';
-  if (status === 'REVIEW_PENDING') message = 'A human reviewer must approve this payment before PayPal can be used.';
-  if (status === 'REVIEW_APPROVED') message = 'Human review passed. This payment can now continue to PayPal.';
-  if (status === 'REVIEW_REJECTED') message = 'A human reviewer rejected this payment. No PayPal order can be created.';
-  if (status === 'PAYPAL_PENDING_APPROVAL') message = 'A PayPal order exists. Complete the Sandbox checkout to continue.';
-  if (status === 'PAYPAL_PENDING_CAPTURE') message = 'PayPal approved the order. PathGuard is completing the capture.';
-  if (status === 'COMPLETED') message = 'Payment completed successfully. No further action is required.';
-
-  return (
-    <div className={`card risk ${cfg[0]}`}>
-      <div className="riskhead">
-        <div className="riskicon">{cfg[1]}</div>
-        <div className="risk-title">
-          <small>PATHGUARD DECISION</small>
-          <h2>{cfg[2]}</h2>
-          <p>{message}</p>
-        </div>
-        <div className="score">
-          <b>{payment?.risk?.risk_score ?? 0}</b><small>/100</small>
-        </div>
-      </div>
-
-      <div className="lifecycle">
-        <span className="lifecycle-label">PAYMENT STATUS</span>
-        <div className={`lifecycle-status ${meta.tone}`}>
-          {meta.icon}<b>{meta.label}</b>
-        </div>
-      </div>
-
-      <div className="summary">
-        <div><small>RECIPIENT</small><b>{payment?.intent?.recipient_name || 'Unknown'}</b></div>
-        <div><small>AMOUNT</small><b>{payment?.intent?.currency || 'USD'} {amount.toLocaleString()}</b></div>
-        <div><small>PURPOSE</small><b>{payment?.intent?.purpose || 'Payment'}</b></div>
-      </div>
-
-      <div className="reasons">
-        <b><ShieldAlert /> Why PathGuard decided this</b>
-        {reasons.length
-          ? reasons.map((r, i) => <p key={`${r}-${i}`}>✓ {r}</p>)
-          : <p>✓ No additional risk reasons were reported.</p>}
-      </div>
-
-      {decision === 'BLOCK' ? (
-        <div className="blocked"><ShieldX /> {payment?.paypal ? 'Payment blocked before capture. PathGuard did not capture the existing PayPal order.' : 'No PayPal order was created.'}</div>
-      ) : status === 'REVIEW_REJECTED' ? (
-        <div className="blocked review-rejected"><ShieldX /> This payment was rejected during human review.</div>
-      ) : status === 'REVIEW_PENDING' ? (
-        <div className="blocked review-held"><Clock3 /> Waiting for human approval before PayPal.</div>
-      ) : status === 'COMPLETED' ? (
-        <div className="completed-inline"><CheckCircle2 /> Payment captured successfully.</div>
-      ) : status === 'PAYPAL_PENDING_APPROVAL' ? (
-        <div className="blocked paypal-held"><Clock3 /> PayPal checkout is awaiting approval.</div>
-      ) : status === 'PAYPAL_PENDING_CAPTURE' ? (
-        <div className="blocked paypal-held"><Loader2 className="spin" /> PayPal approved. Capture is in progress.</div>
-      ) : canPay ? (
-        <button className="paypal" disabled={loading} onClick={onPay}>
-          {loading
-            ? <><Loader2 className="spin" /> Creating PayPal order…</>
-            : <>Continue with PayPal <ArrowRight /></>}
-        </button>
-      ) : null}
+      {[
+        ['Registered users', overview?.users_total, Users],
+        ['Active users', overview?.active_users, CheckCircle2],
+        ['All payments', overview?.payments_total, History],
+        ['Completed volume', '$' + formatAdminMoney(overview?.completed_payment_volume), CircleDollarSign],
+        ['Blocked', overview?.blocked_payments, ShieldX],
+        ['Pending', overview?.pending_payments, Clock3],
+      ].map(([label, value, Icon]) => <div className="card admin-metric" key={label}><span><Icon /></span><small>{label}</small><b>{value ?? '—'}</b></div>)}
     </div>
-  );
-}
-
-createRoot(document.getElementById('root')).render(<App />);
- + formatAdminMoney(overview?.completed_payment_volume), CircleDollarSign], ['Blocked', overview?.blocked_payments, ShieldX], ['Pending', overview?.pending_payments, Clock3]].map(([label, value, Icon]) => <div className="card admin-metric" key={label}><span><Icon /></span><small>{label}</small><b>{value ?? '—'}</b></div>)}
+    <div className="admin-switch">
+      <button className={view === 'users' ? 'selected' : ''} onClick={() => setView('users')}><Users /> User management</button>
+      <button className={view === 'payments' ? 'selected' : ''} onClick={() => setView('payments')}><History /> All payments</button>
     </div>
-    <div className="admin-switch"><button className={view === 'users' ? 'selected' : ''} onClick={() => setView('users')}><Users /> User management</button><button className={view === 'payments' ? 'selected' : ''} onClick={() => setView('payments')}><History /> All payments</button></div>
     {view === 'users' ? <div className="card admin-table-card">
-      <div className="admin-table-heading"><div><h2>Users</h2><p>Search accounts, review roles, and manage access.</p></div><form className="admin-search" onSubmit={searchUsers}><Search /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search name or email" /><button type="submit">Search</button></form></div>
-      <div className="admin-table-scroll"><table className="admin-table"><thead><tr><th>User</th><th>Role</th><th>Payments</th><th>Joined</th><th>Status</th><th>Actions</th></tr></thead><tbody>{users.map((account) => <tr key={account.id}><td><b>{account.display_name}</b><small>{account.email}</small><small>Account #{account.id}</small></td><td><select aria-label={'Role for ' + account.email} value={account.role} disabled={busyId === account.id} onChange={(e) => updateUser(account, { role: e.target.value })}><option value="customer">Customer</option><option value="reviewer">Reviewer</option><option value="admin">Admin</option></select></td><td>{account.payment_count}</td><td>{formatAdminDate(account.created_at)}</td><td><span className={'admin-state ' + (account.is_active ? 'active' : 'inactive')}>{account.is_active ? 'Active' : 'Inactive'}</span></td><td><button className={'admin-action ' + (account.is_active ? 'deactivate' : 'activate')} disabled={busyId === account.id} onClick={() => updateUser(account, { is_active: !account.is_active })}>{busyId === account.id ? 'Saving…' : account.is_active ? 'Deactivate' : 'Reactivate'}</button></td></tr>)}</tbody></table>{!users.length && <p className="muted admin-empty">No users match this search.</p>}</div>
-    </div> : <div className="card admin-table-card"><div className="admin-table-heading"><div><h2>All payments</h2><p>Platform-wide payment activity and risk decisions.</p></div><div className="admin-search"><Search /><input value={paymentQuery} onChange={(e) => setPaymentQuery(e.target.value)} placeholder="Search payment, user, status" /></div></div><div className="admin-table-scroll"><table className="admin-table"><thead><tr><th>Payment</th><th>Account</th><th>Amount</th><th>Risk</th><th>Status</th><th>Created</th></tr></thead><tbody>{visiblePayments.map((item) => <tr key={item.id}><td><b>#{item.id} · {item.recipient}</b><small>{item.purpose || 'Payment'}</small></td><td>{item.user_email}</td><td>{item.currency} {formatAdminMoney(item.amount)}</td><td>{item.risk_score ?? '—'}{item.risk_decision ? <small>{item.risk_decision}</small> : null}</td><td><span className={'admin-state ' + (item.status === 'COMPLETED' ? 'active' : item.status === 'BLOCK' ? 'inactive' : 'pending')}>{item.status}</span></td><td>{formatAdminDate(item.created_at)}</td></tr>)}</tbody></table>{!visiblePayments.length && <p className="muted admin-empty">No payments match this search.</p>}</div></div>}
+      <div className="admin-table-heading">
+        <div><h2>Users</h2><p>Search accounts, review roles, and manage access.</p></div>
+        <form className="admin-search" onSubmit={searchUsers}><Search /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search name or email" /><button type="submit">Search</button></form>
+      </div>
+      <div className="admin-table-scroll"><table className="admin-table"><thead><tr><th>User</th><th>Role</th><th>Payments</th><th>Joined</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody>{users.map(account => <tr key={account.id}>
+          <td><b>{account.display_name}</b><small>{account.email}</small><small>Account #{account.id}</small></td>
+          <td><select aria-label={'Role for ' + account.email} value={account.role} disabled={busyId === account.id} onChange={event => updateUser(account, { role: event.target.value })}><option value="customer">Customer</option><option value="reviewer">Reviewer</option><option value="admin">Admin</option></select></td>
+          <td>{account.payment_count}</td><td>{formatAdminDate(account.created_at)}</td>
+          <td><span className={'admin-state ' + (account.is_active ? 'active' : 'inactive')}>{account.is_active ? 'Active' : 'Inactive'}</span></td>
+          <td><button className={'admin-action ' + (account.is_active ? 'deactivate' : 'activate')} disabled={busyId === account.id} onClick={() => updateUser(account, { is_active: !account.is_active })}>{busyId === account.id ? 'Saving…' : account.is_active ? 'Deactivate' : 'Reactivate'}</button></td>
+        </tr>)}</tbody></table>
+        {!users.length && <p className="muted admin-empty">No users match this search.</p>}
+      </div>
+    </div> : <div className="card admin-table-card">
+      <div className="admin-table-heading"><div><h2>All payments</h2><p>Platform-wide payment activity and risk decisions.</p></div><div className="admin-search"><Search /><input value={paymentQuery} onChange={event => setPaymentQuery(event.target.value)} placeholder="Search payment, user, status" /></div></div>
+      <div className="admin-table-scroll"><table className="admin-table"><thead><tr><th>Payment</th><th>Account</th><th>Amount</th><th>Risk</th><th>Status</th><th>Created</th></tr></thead>
+        <tbody>{visiblePayments.map(item => <tr key={item.id}>
+          <td><b>#{item.id} · {item.recipient}</b><small>{item.purpose || 'Payment'}</small></td><td>{item.user_email}</td>
+          <td>{item.currency} {formatAdminMoney(item.amount)}</td><td>{item.risk_score ?? '—'}{item.risk_decision ? <small>{item.risk_decision}</small> : null}</td>
+          <td><span className={'admin-state ' + (item.status === 'COMPLETED' ? 'active' : item.status === 'BLOCK' ? 'inactive' : 'pending')}>{item.status}</span></td><td>{formatAdminDate(item.created_at)}</td>
+        </tr>)}</tbody></table>
+        {!visiblePayments.length && <p className="muted admin-empty">No payments match this search.</p>}
+      </div>
+    </div>}
     <p className="admin-footnote">Sensitive account controls are available only to administrators. Changes are enforced by the backend.</p>
   </section>;
 }
-
 
 function Risk({ payment, decision, status, loading, onPay, onPayWithSavedWallet, paypalConnected }) {
   const decisionConfig = {
