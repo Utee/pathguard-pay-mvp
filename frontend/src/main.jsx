@@ -161,6 +161,15 @@ function App() {
       const d = await r.json();
 
       if (r.ok && d?.id) {
+        let recipientProfile = null;
+        try {
+          const profileResponse = await apiFetch(
+            `${API}/api/payments/recipients/${encodeURIComponent(d.recipient)}/history?currency=${encodeURIComponent(d.currency || 'USD')}`
+          );
+          if (profileResponse.ok) recipientProfile = await profileResponse.json();
+        } catch {
+          // Payment restoration should still work when recipient history is unavailable.
+        }
         setPayment({
           payment_id: d.id,
           intent: {
@@ -171,6 +180,7 @@ function App() {
           },
           risk: d.risk,
           paypal: d.paypal,
+          recipient_profile: recipientProfile,
           status: d.status,
         });
       }
