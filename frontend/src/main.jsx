@@ -19,6 +19,10 @@ import {
   Bell,
   Link2,
   Unlink,
+  CreditCard,
+  Wallet,
+  Shield,
+  LayoutDashboard,
 } from 'lucide-react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
@@ -698,8 +702,13 @@ function App() {
           </div>
         </div>
         <nav className="workspace-nav" aria-label="Main navigation">
-          <button className={activeTab === 'overview' ? 'nav-active' : ''} onClick={() => setActiveTab('overview')}><Activity /> Overview</button>
-          <button className={activeTab === 'activity' ? 'nav-active' : ''} onClick={() => setActiveTab('activity')}><History /> Activity</button>
+          <span className="nav-section-label">WORKSPACE</span>
+          <button className={activeTab === 'overview' ? 'nav-active' : ''} onClick={() => setActiveTab('overview')}><LayoutDashboard /> Overview</button>
+          <button className={activeTab === 'payments' ? 'nav-active' : ''} onClick={() => setActiveTab('payments')}><CreditCard /> Make a payment</button>
+          <button className={activeTab === 'activity' ? 'nav-active' : ''} onClick={() => setActiveTab('activity')}><History /> Transactions</button>
+          <span className="nav-section-label nav-section-spaced">PROTECTION</span>
+          <button className={activeTab === 'security' ? 'nav-active' : ''} onClick={() => setActiveTab('security')}><ShieldCheck /> Security & limits</button>
+          <button className={activeTab === 'wallet' ? 'nav-active' : ''} onClick={() => setActiveTab('wallet')}><Wallet /> Payment methods</button>
           <button className={activeTab === 'notifications' ? 'nav-active' : ''} onClick={() => setActiveTab('notifications')}><Bell /> Notifications{notifications.length > 0 && <span className="nav-count">{notifications.length}</span>}</button>
         </nav>
         <div className="account-controls">
@@ -709,7 +718,7 @@ function App() {
         </div>
       </header>
 
-      <main className={activeTab !== 'overview' ? 'single-view' : ''}>
+      <main className={activeTab !== 'overview' ? 'single-view' : ''} data-view={activeTab}>
         {activeTab === 'activity' ? <section className="tab-page">
           <div className="page-heading"><div className="eyebrow">PAYMENTS</div><h1>Activity</h1><p>Review your recent payment requests and their status.</p></div>
           <div className="card info activity-page"><h3><History /> Recent activity</h3>
@@ -721,7 +730,7 @@ function App() {
             {notifications.length ? notifications.map((item) => <div className="notification-item" key={item.id}><span className={`notification-dot ${item.severity}`}></span><div className="notification-content"><div className="notification-title-row"><b>{item.title}</b><span className={`incident-severity ${item.severity}`}>{item.severity}</span></div><p>{item.message}</p><small>{item.recipient} · {item.currency} {Number(item.amount).toLocaleString()} · {item.created_at ? new Date(item.created_at).toLocaleString() : ''}</small></div></div>) : <p className="muted">No recent notifications.</p>}
           </div>
         </section> : <>
-        <section>
+        <section className="payment-workflow" style={{ display: ['overview', 'payments'].includes(activeTab) ? undefined : 'none' }}>
           {paypalResult?.state === 'completed' && (
             <div className="result-card completed">
               <div className="result-icon"><PartyPopper /></div>
@@ -849,8 +858,13 @@ function App() {
           )}
         </section>
 
-        <aside>
-          <div className="card info limits-card paypal-connection-card">
+        <aside className="workspace-panels" style={{ display: ['overview', 'security', 'wallet', 'intelligence'].includes(activeTab) ? undefined : 'none' }}>
+          {activeTab !== 'overview' && <div className="page-heading panel-page-heading">
+            <div className="eyebrow">{activeTab === 'wallet' ? 'CONNECTED ACCOUNTS' : activeTab === 'security' ? 'PAYMENT PROTECTION' : 'RISK & OPERATIONS'}</div>
+            <h1>{activeTab === 'wallet' ? 'Payment methods' : activeTab === 'security' ? 'Security & limits' : 'Payment intelligence'}</h1>
+            <p>{activeTab === 'wallet' ? 'Manage the PayPal Sandbox wallet connected to your account.' : activeTab === 'security' ? 'Control your spending boundaries and see how much capacity remains.' : 'Understand payment outcomes, recurring signals, and recommended actions.'}</p>
+          </div>}
+          <div className="card info limits-card paypal-connection-card" style={{ display: ['overview', 'wallet'].includes(activeTab) ? undefined : 'none' }}>
             <h3><Link2 /> PayPal account</h3>
             {paypalConnection.connected ? (
               <>
@@ -882,7 +896,7 @@ function App() {
             <small className="limits-footnote">Connecting a wallet is separate from PathGuard approval. Every payment still passes risk checks, manual review when required, and your spending limits. A saved wallet may be charged without a separate PayPal checkout confirmation for every payment; use this connection only if you consent to that flow.</small>
           </div>
 
-          <div className="card info limits-card">
+          <div className="card info limits-card spending-limits-panel" style={{ display: ['overview', 'security'].includes(activeTab) ? undefined : 'none' }}>
             <h3><Settings2 /> Spending limits</h3>
             <p className="limits-intro">Set your budget before paying. PathGuard checks these caps before creating a PayPal order and again before capture.</p>
             <div className="limits-grid">
@@ -924,7 +938,7 @@ function App() {
             <small className="limits-footnote">These limits and payment history apply only to your account. Limits are denominated in USD; non-USD payments are blocked until currency conversion is supported.</small>
           </div>
 
-          <div className="card info">
+          <div className="card info intelligence-panel" style={{ display: ['overview', 'intelligence'].includes(activeTab) ? undefined : 'none' }}>
             <h3><Activity /> Payment intelligence</h3>
             <p className="limits-intro">
               {intelligenceOverview?.scope === 'organization'
@@ -994,7 +1008,7 @@ function App() {
             <small className="limits-footnote">Signals are based on recorded audit events, not predictions. Suggested actions are guidance only; they never bypass risk decisions or spending limits.</small>
           </div>
 
-          {['reviewer', 'admin'].includes(user.role) && <div className="card info">
+          {['reviewer', 'admin'].includes(user.role) && ['overview', 'intelligence'].includes(activeTab) && <div className="card info">
             <h3><Clock3 /> Human review queue <span className="queue-count">{reviewQueue.length}</span></h3>
             {reviewQueue.length ? reviewQueue.map((item) => (
               <div className="review-item" key={item.id}>
