@@ -5,8 +5,8 @@ AI payment safety layer for PayPal Sandbox.
 ## What the MVP does
 
 1. Accepts a natural-language payment instruction.
-2. Extracts a structured payment intent using OpenAI when configured.
-3. Falls back to a small local parser when `OPENAI_API_KEY` is absent.
+2. Extracts a structured payment intent through OpenRouter when configured.
+3. Falls back to a small local parser when `OPENROUTER_API_KEY` is absent.
 4. Runs the intent through deterministic PathGuard risk rules.
 5. Returns `ALLOW`, `REVIEW`, or `BLOCK`.
 6. Stores payment requests and risk assessments in SQLite.
@@ -45,8 +45,7 @@ The long-term direction is to make PathGuard Pay a payment safety layer that can
 - Python 3.11+
 - Node.js 18+
 - Optional: PayPal Developer Sandbox app credentials
-- Optional: OpenAI API key for payment-intent extraction
-- Optional: OpenRouter API key for AI-generated incident summaries
+- Optional: OpenRouter API key for payment-intent extraction and AI-generated incident summaries
 
 ## Backend setup
 
@@ -56,8 +55,9 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-# Optional intelligence summaries through OpenRouter:
-# Set OPENROUTER_API_KEY in backend/.env and restart the API.
+# Optional: set OPENROUTER_API_KEY in backend/.env to enable AI payment-intent extraction and operational summaries.
+# OPENROUTER_MODEL defaults to nvidia/nemotron-3-super-120b-a12b:free.
+# OPENROUTER_BASE_URL defaults to https://openrouter.ai/api/v1.
 python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
@@ -209,7 +209,7 @@ Detect repeated PayPal errors, stale checkouts, spending-limit block spikes, and
 
 ### GET `/api/intelligence/summary`
 
-Return an on-demand operational summary and priority actions. When `OPENROUTER_API_KEY` is set, the service uses the configured `OPENROUTER_MODEL`; otherwise, it supplies a deterministic rule-based summary. The AI prompt receives only aggregate metrics and sanitized incident signals, never raw payment instructions, recipient names, emails, or audit messages. AI output is explanatory only and does not change a payment's risk decision or limits.
+Return an on-demand operational summary and priority actions. When `OPENROUTER_API_KEY` is set, payment-intent extraction and operational summaries use the configured OpenRouter model; otherwise, intent extraction uses the conservative local parser and summaries use deterministic rules. The AI prompt receives only aggregate metrics and sanitized incident signals, never raw payment instructions, recipient names, emails, or audit messages. AI output is explanatory only and does not change a payment's risk decision or limits.
 
 ### GET `/api/intelligence/notifications`
 
