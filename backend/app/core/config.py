@@ -20,13 +20,12 @@ class Settings(BaseSettings):
     cors_allowed_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
     # ---------------------------------------------------------
-    # OpenAI
+    # OpenRouter AI
     # ---------------------------------------------------------
 
-    openai_api_key: str | None = None
-    openai_model: str = "gpt-5-mini"
     openrouter_api_key: str | None = None
-    openrouter_model: str = "openai/gpt-chat-latest"
+    openrouter_model: str = "nvidia/nemotron-3-super-120b-a12b:free"
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
 
     # ---------------------------------------------------------
     # PayPal

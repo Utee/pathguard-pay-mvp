@@ -281,7 +281,7 @@ def summarize_intelligence(db: Session, user: UserAccount) -> dict:
     }
     try:
         response = httpx.post(
-            "https://openrouter.ai/api/v1/chat/completions",
+            settings.openrouter_base_url.rstrip("/") + "/chat/completions",
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
