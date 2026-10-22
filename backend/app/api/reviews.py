@@ -65,12 +65,11 @@ def confirm_own_review(
     db: Session = Depends(get_db),
     current_user: UserAccount = Depends(get_current_user),
 ):
-    if not verify_password(payload.password, current_user.password_hash):
-        raise HTTPException(status_code=401, detail="Password is incorrect.")
-
     payment = db.get(PaymentRequest, payment_id)
     if not payment or payment.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Payment request not found")
+    if not verify_password(payload.password, current_user.password_hash):
+        raise HTTPException(status_code=401, detail="Password is incorrect.")
     if not payment.risk or payment.risk.decision != "REVIEW":
         raise HTTPException(status_code=409, detail="Only REVIEW payments can be confirmed.")
     if payment.status != "REVIEW_PENDING":
