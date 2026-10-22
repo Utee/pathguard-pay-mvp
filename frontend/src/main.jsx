@@ -458,6 +458,29 @@ function App() {
     }
   }
 
+  async function continueApprovedReview(item) {
+    setError('');
+    setPayment({
+      payment_id: item.id,
+      intent: {
+        recipient_name: item.recipient,
+        amount: Number(item.amount),
+        currency: item.currency || 'USD',
+        purpose: item.purpose,
+      },
+      risk: item.risk ? {
+        risk_score: item.risk.score,
+        decision: item.risk.decision,
+        reasons: item.risk.reasons || [],
+      } : null,
+      status: item.status,
+      paypal: null,
+      recipient_profile: null,
+    });
+    setActiveTab('payments');
+    await paypal(false, item.id);
+  }
+
   async function decideOwnReview(item, action) {
     setOwnReviewBusyId(item.id);
     setOwnReviewError('');
@@ -631,20 +654,21 @@ function App() {
     }
   }
 
-  async function paypal(useSavedWallet = false) {
-    if (!payment?.payment_id) return;
+  async function paypal(useSavedWallet = false, paymentIdOverride = null) {
+    const targetPaymentId = paymentIdOverride || payment?.payment_id;
+    if (!targetPaymentId) return;
 
     setPayLoading(true);
     setError('');
 
     try {
-      const endpoint = `${API}/api/payments/${payment.payment_id}/paypal/create${useSavedWallet ? '?use_saved_wallet=true' : ''}`;
+      const endpoint = `${API}/api/payments/${targetPaymentId}/paypal/create${useSavedWallet ? '?use_saved_wallet=true' : ''}`;
       const r = await apiFetch(endpoint, { method: 'POST' });
 
       const d = await r.json();
       if (!r.ok) throw new Error(d.detail || 'PayPal order failed');
 
-      setPayment((current) => ({
+      setPayment((current) => current?.payment_id === targetPaymentId ? ({
         ...current,
         status: d.status || 'PAYPAL_PENDING_APPROVAL',
         paypal: {
@@ -653,11 +677,11 @@ function App() {
           status: d.status,
           approval_url: d.approval_url,
         },
-      }));
+      }) : current);
 
       if (d.status === 'COMPLETED') {
         localStorage.removeItem('pathguard_paypal_payment_id');
-        setPayment((current) => ({
+        setPayment((current) => current?.payment_id === targetPaymentId ? ({
           ...current,
           status: 'COMPLETED',
           paypal: {
@@ -666,7 +690,7 @@ function App() {
             status: d.status,
             capture_id: d.capture_id,
           },
-        }));
+        }) : current);
         setPaypalResult({
           state: 'completed',
           paymentId: d.payment_id,
@@ -674,7 +698,7 @@ function App() {
           captureId: d.capture_id,
         });
         setPayLoading(false);
-        await restorePayment(payment.payment_id);
+        await restorePayment(targetPaymentId);
         load();
         return;
       }
@@ -799,6 +823,7 @@ function App() {
                 <small>{item.purpose || 'Payment'} · Risk {item.risk?.score ?? '—'}/100 · {item.created_at ? new Date(item.created_at).toLocaleString() : ''}</small>
                 <div className={`lifecycle-status ${meta.tone}`}>{meta.icon}<b>{meta.label}</b></div>
                 {item.risk?.reasons?.map((reason, index) => <small className="review-reason" key={`${item.id}-${index}`}>• {reason}</small>)}
+                {item.status === 'REVIEW_APPROVED' && <div className="review-actions"><button disabled={payLoading} onClick={() => continueApprovedReview(item)}>{payLoading ? 'Preparing checkout…' : 'Continue to PayPal'} <ArrowRight /></button></div>}
                 {pending ? <>
                   <label className="self-review-password">Confirm with your account password
                     <input type="password" autoComplete="current-password" value={reviewPasswords[item.id] || ''} onChange={(event) => setReviewPasswords((values) => ({ ...values, [item.id]: event.target.value }))} placeholder="Re-enter password" disabled={ownReviewBusyId === item.id} />
