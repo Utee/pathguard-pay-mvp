@@ -1,54 +1,189 @@
-# PathGuard Pay — Local MVP
+# PathGuard Pay
 
-AI payment safety layer for PayPal Sandbox.
+**A pre-payment safety layer that checks payment instructions before they reach PayPal.**
 
-## What the MVP does
+PathGuard Pay is a hackathon MVP exploring how payment products can make sending money safer. It accepts a payment instruction in natural language, turns it into a structured intent, evaluates it against deterministic risk rules and the user's spending limits, and then decides whether the payment can proceed, needs human review, or must be blocked.
 
-1. Accepts a natural-language payment instruction.
-2. Extracts a structured payment intent through OpenRouter when configured.
-3. Falls back to a small local parser when `OPENROUTER_API_KEY` is absent.
-4. Runs the intent through deterministic PathGuard risk rules.
-5. Returns `ALLOW`, `REVIEW`, or `BLOCK`.
-6. Stores payment requests and risk assessments in SQLite.
-7. Creates PayPal Sandbox orders only when the risk engine allows the payment or a human reviewer approves a `REVIEW` decision.
-8. Handles the PayPal buyer approval flow and server-side capture.
-9. Enforces configurable daily, weekly, monthly, and optional per-transaction spending limits.
-10. Reserves capacity for eligible in-flight payments and re-checks limits before PayPal checkout/capture.
-11. Persists recent payment activity for the dashboard.
-12. Provides a React/Vite dashboard for analysis, spending-limit settings, human review, and PayPal checkout.
-13. Requires signed-in customer accounts for private payment history and per-account spending settings.
-14. Provides reviewer/admin roles for human review and organization-wide operational metrics.
-15. Detects recurring PayPal errors, stale checkouts, and spikes in policy/risk blocks from audit events.
-16. Offers on-demand OpenRouter summaries with a deterministic fallback and an in-app notification feed.
-17. Allows each user to connect or disconnect a PayPal Sandbox wallet through PayPal Vault and uses saved-wallet tokens only after PathGuard approves the payment.
-18. Builds account-scoped recipient trust profiles and flags unusually large payments, changed payment purposes, and rapid repeat payments.
+The project combines payment-risk analysis, account-level controls, recipient history, human review, operational intelligence, and a PayPal Sandbox checkout flow in one application.
 
-> No real money is moved by this project. PayPal integration is intended for the Sandbox.
+> **Demo and safety notice:** This project is configured for the PayPal Sandbox. It is a prototype, not a production payment service, and it does not move real money.
 
-## Architecture
+## The problem
+
+Payment interfaces make it easy to submit a payment, but they may not give a user or an operations team enough context to judge whether the payment is unusual. A new recipient, an unexpectedly large amount, a changed payment purpose, repeated attempts, or a user's spending-limit breach can all be reasons to pause before money is sent.
+
+PathGuard Pay explores a simple principle: **check first, pay second**. The payment rail should not be the first place a questionable instruction is examined.
+
+## How PathGuard Pay works
 
 ```text
-Natural-language instruction
-          ↓
-    Payment Intent
-          ↓
- PathGuard Risk Engine
-          ↓
-    ALLOW / REVIEW / BLOCK
-          ↓
-       PayPal
+User enters a payment instruction
+            |
+            v
+Extract and validate payment intent
+            |
+            v
+Check recipient history, risk rules and spending limits
+            |
+            v
+     ALLOW / REVIEW / BLOCK
+        /       |       \
+       v        v        v
+   Continue   Human     Stop
+   checkout   review
+       |
+       v
+PayPal Sandbox approval / saved-wallet flow
+       |
+       v
+Server verifies and captures eligible order
+       |
+       v
+Payment status, history and audit events
 ```
 
-The long-term direction is to make PathGuard Pay a payment safety layer that can sit in front of multiple payment rails, not just PayPal.
+1. **Describe the payment.** A signed-in user enters an instruction such as “Pay John $200 for the website.”
+2. **Structure the intent.** If configured, OpenRouter helps extract payment details from natural language. Otherwise, a conservative local parser is used.
+3. **Evaluate the payment.** PathGuard applies deterministic rules, recipient-history signals, and the user's active spending limits.
+4. **Apply the decision.** `ALLOW` can continue to checkout, `REVIEW` must be approved by an authorized reviewer, and `BLOCK` cannot proceed.
+5. **Complete checkout in Sandbox.** Eligible payments use PayPal Sandbox. The backend verifies the return and performs server-side capture.
+6. **Record what happened.** Payment history and audit events support user visibility, review, and operational monitoring.
 
-## Requirements
+AI is an assistive component, not the final payment authority. An AI-generated intent or summary cannot override the deterministic risk engine, human-review requirement, or spending limits.
 
-- Python 3.11+
-- Node.js 18+
-- Optional: PayPal Developer Sandbox app credentials
-- Optional: OpenRouter API key for payment-intent extraction and AI-generated incident summaries
+## Features
 
-## Backend setup
+### 1. Payment risk analysis
+
+- Natural-language payment instructions.
+- Structured intent extraction using optional OpenRouter integration, with a local parser fallback.
+- Deterministic risk decisions: **ALLOW**, **REVIEW**, or **BLOCK**.
+- Checks for unusually large payments and recipient-specific amount anomalies.
+- Account-scoped recipient profiles built from completed payment history.
+- Signals for new recipients, changed payment purposes, and rapid repeat payments.
+- Payment detail and audit timelines for investigating a decision.
+
+### 2. User accounts and spending controls
+
+- Customer registration and sign-in using bearer access tokens.
+- Separate customer payment history and spending policies.
+- Configurable daily, weekly, monthly, and optional per-transaction limits.
+- A timezone setting for spending-period boundaries.
+- Server-side enforcement throughout the payment lifecycle, including checks before checkout/capture.
+- Budget reservations for eligible in-flight payments to reduce the chance of concurrent attempts exceeding a limit.
+- USD-denominated spending policies; unsupported non-USD payments are blocked rather than silently converted.
+
+Default limits are **USD 1,000 per day**, **USD 10,000 per week**, and **USD 10,000 per month**, using `Africa/Lagos` period boundaries. Users can adjust supported limits in the application.
+
+### 3. PayPal Sandbox checkout and saved wallet
+
+- Create PayPal Sandbox orders for eligible payment requests.
+- Standard PayPal-hosted buyer approval flow.
+- Server-side order verification and capture.
+- Idempotent capture handling.
+- Optional PayPal Vault connection flow for users who want to save a Sandbox wallet.
+- Encrypted storage for saved-wallet tokens; tokens are not returned by the API.
+- PathGuard checks still run before a saved-wallet payment is attempted.
+
+Saved-wallet functionality requires Vault to be enabled in the PayPal Sandbox REST app and the encryption key to be configured. PayPal may still require the payer to take action.
+
+### 4. Human review workflow
+
+- A queue for payments with a `REVIEW` decision.
+- Reviewer approval or rejection with notes and review events.
+- A payment cannot proceed from `REVIEW` until an authorized reviewer approves it.
+- Reviewer identity comes from the authenticated account rather than trusting an identity submitted by the client.
+
+### 5. Operational intelligence and notifications
+
+- Dashboard metrics for payment outcomes, completed spend, blocked attempts, operational errors, and success rate.
+- Heuristic detection for recurring PayPal errors, stale checkouts, spending-limit block spikes, and unusual risk-block volumes.
+- On-demand operational summaries with an OpenRouter option and deterministic fallback.
+- In-app notifications based on audit events, including blocks, review requests, PayPal failures, cancellations, stale checkouts, and completed payments.
+- Customer views are account-scoped; reviewer/admin views can include organization-wide operational signals.
+
+Incident detections are investigative signals, not confirmed root causes. Email and push notifications are not configured in this MVP.
+
+### 6. Admin dashboard
+
+Administrators have a dedicated area for platform-wide oversight, including:
+
+- User and account overview metrics.
+- Searchable user management.
+- Role and account-status controls.
+- Platform-wide payment monitoring.
+- Payment and operational activity visibility.
+
+Admin endpoints are protected by role checks. The first administrator or staff account should be provisioned through the backend CLI and the deployment environment should be secured.
+
+## Technology stack
+
+| Area | Technology | Purpose |
+|---|---|---|
+| Frontend | React 19 | Interactive user, reviewer, and admin dashboards |
+| Frontend tooling | Vite 6, JavaScript/TypeScript tooling | Local development and production build |
+| UI icons | Lucide React | Interface icons |
+| Backend | Python, FastAPI | REST API and application workflows |
+| API validation | Pydantic / pydantic-settings | Request validation and configuration |
+| Database layer | SQLAlchemy | Persistence and database access |
+| Local database | SQLite | Lightweight local MVP storage |
+| Authentication | PyJWT, pwdlib with Argon2 | Signed access tokens and password hashing |
+| Payment provider | PayPal REST API Sandbox | Sandbox orders, approval, capture, and Vault connection |
+| AI integration | OpenRouter through the OpenAI-compatible client | Optional intent extraction and operational summaries |
+| Wallet-token encryption | cryptography / Fernet | Encrypt saved PayPal payment tokens at rest |
+| Testing | pytest | Backend and risk workflow tests |
+| API exploration | FastAPI OpenAPI / Swagger UI | Interactive API documentation |
+
+OpenRouter is optional. Without an API key, the application uses its local intent parser and deterministic operational-summary fallback. The core risk decision and spending-limit enforcement do not depend on an LLM response.
+
+## Architecture at a glance
+
+- **React frontend** sends authenticated requests to the API.
+- **FastAPI backend** validates requests and enforces authorization.
+- **Risk and limits logic** evaluates payment intent, recipient context, and spending policy before checkout.
+- **SQLAlchemy persistence** stores users, payment requests, risk assessments, review records, wallet connection data, and audit events.
+- **PayPal Sandbox adapter** handles order creation, payer approval, verification, and capture.
+- **Intelligence endpoints** summarize aggregate operational metrics and derive heuristic incident signals from stored events.
+
+The backend is the enforcement boundary: a frontend decision or a generated AI summary is not sufficient to authorize a payment.
+
+## Repository layout
+
+```text
+.
+├── backend/
+│   ├── app/
+│   │   ├── api/          # Authentication, payments, limits, reviews, admin and intelligence APIs
+│   │   ├── core/         # Configuration and security utilities
+│   │   └── ...           # Models, database setup and service logic
+│   ├── scripts/          # Staff account provisioning utilities
+│   ├── tests/            # Backend and risk workflow tests
+│   ├── requirements.txt
+│   └── .env.example
+└── frontend/
+    ├── src/              # React application and styles
+    ├── package.json
+    └── vite.config.*
+```
+
+## Getting started
+
+### Prerequisites
+
+- Python 3.11 or newer
+- Node.js 18 or newer and npm
+- Git
+- PayPal Developer Sandbox credentials for checkout testing
+- An OpenRouter API key only if you want the optional AI features
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/Utee/pathguard-pay-mvp.git
+cd pathguard-pay-mvp
+```
+
+### 2. Configure and run the backend
 
 ```bash
 cd backend
@@ -56,54 +191,55 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-# Optional: set OPENROUTER_API_KEY in backend/.env to enable AI payment-intent extraction and operational summaries.
-# OPENROUTER_MODEL defaults to nvidia/nemotron-3-super-120b-a12b:free.
-# OPENROUTER_BASE_URL defaults to https://openrouter.ai/api/v1.
+```
+
+On Windows PowerShell, activate the environment with:
+
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+Generate a strong JWT signing secret:
+
+```bash
 python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
-Copy the generated value into `JWT_SECRET_KEY` in `backend/.env`. Do not use the example file's blank value or commit your real `.env` file. The backend refuses to issue or validate access tokens until the signing key is configured.
+Copy the generated value into `JWT_SECRET_KEY` in `backend/.env`. Do not leave the signing key blank or commit your real `.env` file.
 
-For encrypted storage of a saved PayPal wallet, also generate a Fernet key after installing requirements:
+For optional AI functionality, set `OPENROUTER_API_KEY`. The model and OpenRouter-compatible base URL can be configured using `OPENROUTER_MODEL` and `OPENROUTER_BASE_URL`.
+
+For saved PayPal wallet support, generate a Fernet key:
 
 ```bash
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-Copy it into `PAYPAL_VAULT_ENCRYPTION_KEY`. Keep this key stable and private; without it, PathGuard cannot decrypt saved wallet tokens. Set `PAYPAL_CONNECTION_RETURN_URL` and `PAYPAL_CONNECTION_CANCEL_URL` to public backend callback URLs when testing on a hosted deployment.
+Set the result as `PAYPAL_VAULT_ENCRYPTION_KEY` in `backend/.env`. Keep it private and stable: changing or losing the key can make previously stored wallet tokens unreadable. Configure your PayPal Sandbox Client ID and Secret, and set the PayPal connection callback URLs if testing the Vault flow on a hosted deployment. Enable both **Accept payments** and **Vault** in the Sandbox REST app's advanced settings when using saved wallets.
 
-Windows PowerShell:
-
-```powershell
-cd backend
-python -m venv .venv
-.venv\\Scripts\\Activate.ps1
-pip install -r requirements.txt
-copy .env.example .env
-```
-
-Run the API:
+Start the API from the `backend/` directory:
 
 ```bash
 uvicorn app.main:app --reload
 ```
 
-Create your first user in the web app through the registration screen. New registrations receive the `customer` role. To create a staff account from the backend directory, use:
+The API is available at `http://127.0.0.1:8000`.
+
+### 3. Create a customer or staff account
+
+You can register a customer through the application. New registrations receive the `customer` role.
+
+To provision a reviewer or administrator, run the staff-account script from the backend directory:
 
 ```bash
 python scripts/create_user.py staff@example.com --name "PathGuard Reviewer" --role reviewer
 ```
 
-Use `--role admin` for an administrator. The script prompts for the password. Staff can review queued payments; the acting reviewer identity is taken from their account, not from the submitted request body. Every customer's payments and spending-limit policy are scoped to their own account.
+For an administrator, use `--role admin` instead. The script prompts for the password. Do not expose staff provisioning access or grant administrator privileges to untrusted users.
 
-Open:
+### 4. Run the frontend
 
-- API docs: http://127.0.0.1:8000/docs
-- Health: http://127.0.0.1:8000/health
-
-## Frontend setup
-
-In a second terminal:
+Open a second terminal from the repository root:
 
 ```bash
 cd frontend
@@ -111,224 +247,90 @@ npm install
 npm run dev
 ```
 
-The frontend defaults to:
-
-```text
-http://127.0.0.1:8000
-```
-
-To point it at another backend, create `frontend/.env`:
+Vite prints the local frontend URL when it starts. By default, the frontend uses the local API at `http://127.0.0.1:8000`. To use another backend, create `frontend/.env`:
 
 ```env
 VITE_API_URL=http://127.0.0.1:8000
 ```
 
-## Test authentication and the risk engine
+Ensure the backend's CORS allowlist includes the frontend origin you use.
 
-No external credentials are required for the deterministic risk tests:
+### 5. Open the API docs
+
+- Swagger UI: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+- Health check: [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)
+
+## Testing
+
+Run the backend tests from the backend directory:
 
 ```bash
 cd backend
 pytest
 ```
 
-To use the API manually, create a customer account and retain its access token:
+The deterministic risk tests do not require PayPal or OpenRouter credentials. Checkout and optional AI flows need the corresponding Sandbox credentials or API key to be exercised end to end.
+
+Build the frontend for production:
 
 ```bash
-TOKEN="$(curl -s -X POST http://127.0.0.1:8000/api/auth/register -H "Content-Type: application/json" -d '{"email":"you@example.com","display_name":"Your Name","password":"a-unique-long-password-123"}' | python -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
+cd frontend
+npm install
+npm run build
 ```
 
-Then pass the token as a bearer credential on payment and limit requests:
+## API overview
 
-```bash
-curl -X POST http://127.0.0.1:8000/api/payments/analyze \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"instruction":"Pay John $200 for the website"}'
+The backend exposes REST endpoints grouped around these workflows. The interactive Swagger documentation at `/docs` is the source of truth for request and response schemas.
 
-curl -X POST http://127.0.0.1:8000/api/payments/analyze \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"instruction":"Pay John $10000 for the website"}'
-```
+| Workflow | Representative endpoints | Purpose |
+|---|---|---|
+| Authentication | `/api/auth` | Register and authenticate users |
+| Payment analysis and history | `/api/payments` | Analyze instructions and retrieve payment records |
+| Spending limits | `/api/limits/settings`, `/api/limits/summary` | Configure caps and inspect current usage |
+| PayPal connection | `/api/paypal/connection` | Check, set up, or disconnect a saved Sandbox wallet |
+| Human review | `/api/reviews` | Inspect and resolve payments requiring review |
+| Operational intelligence | `/api/intelligence/overview`, `/api/intelligence/incidents`, `/api/intelligence/summary` | Metrics, heuristic incident signals, and summaries |
+| Notifications | `/api/intelligence/notifications` | Read recent in-app operational events |
+| Administration | `/api/admin/overview`, `/api/admin/users`, `/api/admin/payments` | Admin metrics, user management, and platform payment monitoring |
+| Health | `/health` | Service health check |
 
-## PayPal Sandbox
+Private payment and account data require authentication. Access to staff and admin operations is role-protected.
 
-Create a Sandbox REST app in the PayPal Developer Dashboard and put the Client ID and Secret in `backend/.env`.
+## Security and known limitations
 
-The backend uses PayPal's Sandbox REST base URL:
+This is a hackathon MVP. It demonstrates a payment safety workflow, but it is **not production-hardened**.
 
-`https://api-m.sandbox.paypal.com`
-
-Users can connect a PayPal Sandbox wallet from the dashboard. PathGuard creates a PayPal Vault setup token, redirects the buyer to PayPal to authorize storing the wallet, then exchanges the approved setup token for a reusable payment token. The token is encrypted at rest and is never returned by the API. Enable `Accept payments` and `Vault` in the Sandbox REST app's Advanced options. By default, a payment still uses the standard PayPal Checkout approval redirect. The payment review also offers an explicit `Pay with saved PayPal wallet` option for connected users; PayPal may complete that order directly without another hosted approval screen, or request payer action and return an approval link. PathGuard's risk decision, manual review, and spending-limit checks still run first. This is a Sandbox feature; live use requires separate PayPal eligibility and configuration.
-
-The checkout flow is:
-
-```text
-Analyze
-  ↓
-Risk decision
-  ↓
-Create PayPal order
-  ↓
-Buyer approval
-  ↓
-Server verifies order
-  ↓
-Server captures order
-  ↓
-Payment completed
-```
-
-PayPal credentials remain on the backend.
-
-## Current API
-
-### POST `/api/payments/analyze`
-
-Analyze a natural-language payment instruction for the authenticated user. All `/api/payments` routes require a bearer token except PayPal's return/cancel callbacks.
-
-### GET `/api/limits/settings`
-
-Return the authenticated user's spending policy.
-
-### PUT `/api/limits/settings`
-
-Update the authenticated user's spending limits. Send `daily_limit`, `weekly_limit`, `monthly_limit`, optional `per_transaction_limit`, and an IANA `timezone`. Set a period's limit to `null` to disable that specific cap; at least one cap must remain enabled. Defaults are USD 1,000 daily, USD 10,000 weekly, and USD 10,000 monthly, with no separate per-transaction cap and `Africa/Lagos` period boundaries.
-
-### GET `/api/limits/summary`
-
-Return current-period spending plus active reservations, and remaining capacity for each configured limit.
-
-### GET `/api/intelligence/overview`
-
-Return payment outcomes, completed spend, block counts, operational error counts, and success rate. Customer accounts receive their own metrics; reviewer/admin accounts receive organization-wide aggregates.
-
-### GET `/api/intelligence/incidents`
-
-Detect repeated PayPal errors, stale checkouts, spending-limit block spikes, and unusual risk-block volumes from the audit trail. Detection compares the most recent 24 hours with the preceding six days and reports evidence counts plus suggested investigation steps. These signals are heuristic, not confirmed root causes, and cannot alter payment decisions.
-
-### GET `/api/intelligence/summary`
-
-Return an on-demand operational summary and priority actions. When `OPENROUTER_API_KEY` is set, payment-intent extraction and operational summaries use the configured OpenRouter model; otherwise, intent extraction uses the conservative local parser and summaries use deterministic rules. The AI prompt receives only aggregate metrics and sanitized incident signals, never raw payment instructions, recipient names, emails, or audit messages. AI output is explanatory only and does not change a payment's risk decision or limits.
-
-### GET `/api/intelligence/notifications`
-
-Return up to 50 recent, account-scoped in-app events from the audit trail, such as blocks, PayPal errors, stale checkouts, and completed payments. Reviewer/admin accounts see organization-wide events. Email and push delivery are not configured.
-
-### GET `/api/intelligence/notifications`
-
-Return up to 50 recent account-scoped in-app payment events from the audit trail. Events include risk blocks, human-review requests, spending-limit enforcement, PayPal failures, stale checkouts, cancellations, and completed payments. Reviewer/admin accounts can view organization-wide events. Email or push delivery is not configured.
-
-### GET `/api/payments`
-
-Return recent payment requests belonging to the authenticated user.
-
-### GET `/api/payments/{payment_id}`
-
-Return a payment request, risk assessment, recipient history, review events, audit events, and PayPal details.
-
-### GET `/api/payments/recipients/{recipient_name}/history`
-
-Return an account-scoped recipient profile including trust-history label, completed payment count, total and average amounts, historical amount range, recent 30-day activity, and last payment date. Accepts an optional `currency` query parameter (defaults to `USD`). Recipients with no completed payment history return a `NEW` profile rather than a 404.
-
-### GET `/api/payments/{payment_id}/audit`
-
-Return the audit timeline for a payment attempt.
-
-### GET `/api/paypal/connection`
-
-Return the current user's PayPal wallet connection status without exposing the saved payment token.
-
-### POST `/api/paypal/connection/setup`
-
-Create a PayPal Vault setup token and return the PayPal-hosted approval URL.
-
-### DELETE `/api/paypal/connection`
-
-Revoke the saved PayPal payment token and disconnect the authenticated user's wallet.
-
-### POST `/api/payments/{payment_id}/paypal/create`
-
-Create a PayPal Sandbox order for `ALLOW` payments or `REVIEW` payments explicitly approved by a human reviewer. `BLOCK` and unapproved `REVIEW` payments are rejected. By default this creates the ordinary PayPal-hosted approval flow; pass `?use_saved_wallet=true` only when the user explicitly selects the saved-wallet option. That option requires a connected wallet and may complete server-side.
-
-### GET `/api/reviews`
-
-List payment requests waiting for human review.
-
-### POST `/api/reviews/{payment_id}/approve`
-
-Approve a payment with a `REVIEW` decision. The payment then becomes eligible for PayPal checkout. Accepts an optional `note` and `reviewer`.
-
-### POST `/api/reviews/{payment_id}/reject`
-
-Reject a payment with a `REVIEW` decision. A rejected payment cannot proceed to PayPal. Accepts an optional `note` and `reviewer`.
-
-### GET `/api/reviews/{payment_id}/events`
-
-Return the stored human-review events for a payment, including submission, reviewer, action, note, and timestamp.
-
-### POST `/api/payments/{payment_id}/paypal/capture`
-
-Capture an approved PayPal order. The operation is idempotent.
-
-### GET `/api/payments/paypal/return`
-
-Handle the PayPal buyer return, verify the order, capture an approved order, and redirect the frontend with the result.
-
-### GET `/api/payments/paypal/cancel`
-
-Handle a cancelled PayPal approval and redirect back to the frontend.
+- PayPal is configured for Sandbox use; no real-money payment flow is intended.
+- Keep PayPal credentials, JWT signing secrets, OpenRouter keys, and encryption keys out of source control.
+- Browser access tokens are stored in localStorage in this MVP. A production implementation should review session storage, token revocation, and related browser security risks.
+- Authentication hardening such as rate limiting, account recovery, and broader abuse controls remains necessary before production.
+- Spending limits are checked across the payment lifecycle, but the current MVP does not use database-level locking for strict concurrent reservation accounting. Production use needs transactional locking and load testing.
+- Spending limits are denominated in USD. Non-USD payments are blocked until currency-specific policy or reliable conversion support exists.
+- Incident detection is heuristic and should support investigation, not be treated as proof of fraud or a confirmed root cause.
+- AI-generated extraction and summaries are fallible; deterministic rules and explicit review controls remain authoritative.
+- Email and push notification delivery are not configured.
+- Historical payment records created before account ownership was introduced need explicit reconciliation before any multi-user production migration.
+- Production deployment, PayPal webhook verification, rate limiting, structured monitoring, and other hardening tasks require further work.
 
 ## Roadmap
 
-### Phase 1 — MVP hardening
-- [x] Natural-language payment intent extraction
-- [x] Deterministic PathGuard risk engine
-- [x] ALLOW / REVIEW / BLOCK decisions
-- [x] SQLite persistence
-- [x] React dashboard
-- [x] PayPal Sandbox order creation
-- [x] Server-side PayPal capture
-- [ ] Remove previously committed `frontend/node_modules` from Git history/tree
-- [x] Expand automated backend/API tests
+Potential next steps include:
 
-### Phase 2 — Payment safety workflow
-- [x] Persistent recipient history
-- [x] Human review queue for `REVIEW` payments
-- [x] Full audit timeline for every payment attempt
-- [x] Stronger amount anomaly detection for recipient history and large first payments
-- [ ] Better AI intent extraction and validation
-- [ ] Explicit instruction-vs-intent mismatch detection
+- Strengthen authentication, rate limiting, and session management.
+- Add verified PayPal webhook handling and improve reconciliation for asynchronous payment events.
+- Add database locking and concurrency tests for spending-limit reservations.
+- Expand instruction-versus-intent mismatch detection and risk explanations.
+- Add reviewed policy configuration and richer operational audit tooling.
+- Validate a PostgreSQL-backed deployment and production monitoring.
+- Explore additional payment rails and reusable PathGuard risk APIs.
 
-### Phase 3 — Production readiness
-- [ ] PayPal webhook verification
-- [x] Authentication and user accounts (MVP bearer-token implementation)
-- [ ] PostgreSQL migration and deployment validation
-- [x] Configurable CORS allowlist
-- [ ] Rate limiting
-- [ ] Structured logging and monitoring
-- [ ] Staging deployment
-- [ ] Production deployment
+## Hackathon project summary
 
-### Phase 4 — PathGuard expansion
-- [ ] Reusable PathGuard risk API
-- [ ] MCP/agent integration
-- [ ] Additional payment rails such as Stripe and crypto
-- [ ] Merchant/recipient trust profiles
-- [ ] Organization-level controls and review policies
+PathGuard Pay demonstrates how a safety layer can sit **between a user's payment instruction and a payment provider**. Rather than treating every instruction as a checkout command, it combines structured intent, deterministic risk checks, recipient context, spending limits, human review, and auditability before an eligible payment reaches PayPal Sandbox.
 
-## Security notes
+The goal is not to replace the payment provider. It is to add an explainable checkpoint before the payment is attempted.
 
-- Never commit `.env` files or payment credentials.
-- PayPal Client ID and Secret must stay server-side.
-- Do not treat an AI-generated payment intent as authoritative without deterministic validation.
-- Payments should only reach a payment rail after the PathGuard risk decision permits them; `REVIEW` payments also require an explicit human approval.
-- Access tokens are stored in browser localStorage for this MVP. Before production, consider Secure, HttpOnly, SameSite cookies or another reviewed session design, rate limits on authentication endpoints, password recovery, and server-side token revocation.
-- Existing payment rows that predate accounts are preserved with no owner assigned. They are not exposed to ordinary customer accounts automatically; explicitly reconcile/backfill historical ownership before migration to a live multi-user environment.
-- Spending-limit checks are re-evaluated during the payment lifecycle, but the current MVP does not use database-level locking for strict concurrent reservation accounting. Use PostgreSQL transactions/locking and load tests before production use.
-- The current reviewer role can inspect organization-wide operational aggregates and review queues. Provision staff roles only through the backend CLI and protect access to the deployment environment.
-- Spending limits are denominated in USD. Non-USD payments are blocked until currency-specific policies or reliable conversion rates are implemented.
-- A new eligible intent reserves budget for 30 minutes; an order placed with PayPal reserves budget for up to 24 hours. The server re-checks limits before capture, so an expired reservation does not by itself authorize payment.
-- Blocked, rejected, and cancelled attempts do not count as spending. Completed payments count at their capture timestamp.
-- The auth layer and staff role checks are implemented in this branch, but the changes still require review and merge before main or a deployment includes them. Do not treat this MVP as production-hardened.
+---
+
+Built as a hackathon MVP by [Utee Jacob](https://github.com/Utee) and contributors.
