@@ -704,7 +704,7 @@ function App() {
       }
 
       if (d.approval_url) {
-        localStorage.setItem('pathguard_paypal_payment_id', String(payment.payment_id));
+        localStorage.setItem('pathguard_paypal_payment_id', String(targetPaymentId));
         window.location.href = d.approval_url;
       } else {
         throw new Error('PayPal did not return an approval URL or a completed payment status');
