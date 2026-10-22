@@ -9,6 +9,7 @@ import {
   ShieldAlert,
   History,
   PartyPopper,
+  ClipboardCheck,
   XCircle,
   Settings2,
   Save,
@@ -77,6 +78,10 @@ function App() {
   const [instruction, setInstruction] = useState('');
   const [payment, setPayment] = useState(null);
   const [history, setHistory] = useState([]);
+  const [ownReviews, setOwnReviews] = useState([]);
+  const [reviewPasswords, setReviewPasswords] = useState({});
+  const [ownReviewBusyId, setOwnReviewBusyId] = useState(null);
+  const [ownReviewError, setOwnReviewError] = useState('');
   const [reviewQueue, setReviewQueue] = useState([]);
   const [reviewLoading, setReviewLoading] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -110,6 +115,9 @@ function App() {
     try {
       const r = await apiFetch(`${API}/api/payments`);
       if (r.ok) setHistory(await r.json());
+
+      const ownReviewsResponse = await apiFetch(`${API}/api/reviews/mine`);
+      if (ownReviewsResponse.ok) setOwnReviews(await ownReviewsResponse.json());
 
       if (account && ['reviewer', 'admin'].includes(account.role)) {
         const reviews = await apiFetch(`${API}/api/reviews`);
@@ -398,6 +406,9 @@ function App() {
     setUser(null);
     setPayment(null);
     setHistory([]);
+    setOwnReviews([]);
+    setReviewPasswords({});
+    setOwnReviewError('');
     setReviewQueue([]);
     setIntelligenceOverview(null);
     setIncidents([]);
@@ -444,6 +455,33 @@ function App() {
     } finally {
       setReviewLoading(false);
       load();
+    }
+  }
+
+  async function decideOwnReview(item, action) {
+    setOwnReviewBusyId(item.id);
+    setOwnReviewError('');
+    try {
+      const isConfirm = action === 'confirm';
+      const password = reviewPasswords[item.id] || '';
+      if (isConfirm && !password) throw new Error('Re-enter your account password to confirm this payment.');
+      const response = await apiFetch(`${API}/api/reviews/${item.id}/${isConfirm ? 'confirm' : 'reject-own'}`, {
+        method: 'POST',
+        headers: isConfirm ? { 'Content-Type': 'application/json' } : {},
+        ...(isConfirm ? { body: JSON.stringify({ password }) } : {}),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Could not update this payment review.');
+      setOwnReviews((items) => items.map((entry) => entry.id === item.id ? data : entry));
+      setReviewPasswords((values) => ({ ...values, [item.id]: '' }));
+      setHistory((items) => items.map((entry) => entry.id === item.id ? { ...entry, status: data.status } : entry));
+      setPayment((current) => current?.payment_id === item.id ? { ...current, status: data.status } : current);
+      if (payment?.payment_id === item.id) setActiveTab('payments');
+      await load();
+    } catch (error) {
+      setOwnReviewError(error.message || 'Could not update this payment review.');
+    } finally {
+      setOwnReviewBusyId(null);
     }
   }
 
@@ -734,6 +772,7 @@ function App() {
           <button className={activeTab === 'overview' ? 'nav-active' : ''} onClick={() => setActiveTab('overview')}><LayoutDashboard /> Overview</button>
           <button className={activeTab === 'payments' ? 'nav-active' : ''} onClick={() => setActiveTab('payments')}><CreditCard /> Make a payment</button>
           <button className={activeTab === 'activity' ? 'nav-active' : ''} onClick={() => setActiveTab('activity')}><History /> Transactions</button>
+          <button className={activeTab === 'reviews' ? 'nav-active' : ''} onClick={() => setActiveTab('reviews')}><ClipboardCheck /> Payment Reviews{ownReviews.some((item) => item.status === 'REVIEW_PENDING') && <span className="nav-count">{ownReviews.filter((item) => item.status === 'REVIEW_PENDING').length}</span>}</button>
           <span className="nav-section-label nav-section-spaced">PROTECTION</span>
           <button className={activeTab === 'security' ? 'nav-active' : ''} onClick={() => setActiveTab('security')}><ShieldCheck /> Security & limits</button>
           <button className={activeTab === 'wallet' ? 'nav-active' : ''} onClick={() => setActiveTab('wallet')}><Wallet /> Payment methods</button>
@@ -748,7 +787,29 @@ function App() {
       </header>
 
       <main className={activeTab !== 'overview' ? 'single-view' : ''} data-view={activeTab}>
-        {activeTab === 'admin' && user.role === 'admin' ? <AdminDashboard /> : activeTab === 'activity' ? <section className="tab-page">
+        {activeTab === 'admin' && user.role === 'admin' ? <AdminDashboard /> : activeTab === 'reviews' ? <section className="tab-page">
+          <div className="page-heading"><div className="eyebrow">PAYMENT SAFETY</div><h1>Payment Reviews</h1><p>Review payments flagged by PathGuard before starting PayPal checkout. Your password is required to confirm a payment.</p></div>
+          {ownReviewError && <div className="error"><ShieldAlert /><span>{ownReviewError}</span></div>}
+          <div className="card info self-reviews-page"><h3><ClipboardCheck /> Your flagged payments <span className="queue-count">{ownReviews.filter((item) => item.status === 'REVIEW_PENDING').length}</span></h3>
+            {ownReviews.length ? ownReviews.map((item) => {
+              const pending = item.status === 'REVIEW_PENDING';
+              const meta = statusMeta(item.status);
+              return <div className="review-item self-review-item" key={item.id}>
+                <div className="review-meta"><b>{item.recipient}</b><strong>{item.currency} {Number(item.amount).toLocaleString(undefined, { maximumFractionDigits: 2 })}</strong></div>
+                <small>{item.purpose || 'Payment'} · Risk {item.risk?.score ?? '—'}/100 · {item.created_at ? new Date(item.created_at).toLocaleString() : ''}</small>
+                <div className={`lifecycle-status ${meta.tone}`}>{meta.icon}<b>{meta.label}</b></div>
+                {item.risk?.reasons?.map((reason, index) => <small className="review-reason" key={`${item.id}-${index}`}>• {reason}</small>)}
+                {pending ? <>
+                  <label className="self-review-password">Confirm with your account password
+                    <input type="password" autoComplete="current-password" value={reviewPasswords[item.id] || ''} onChange={(event) => setReviewPasswords((values) => ({ ...values, [item.id]: event.target.value }))} placeholder="Re-enter password" disabled={ownReviewBusyId === item.id} />
+                  </label>
+                  <p className="limits-footnote">Confirming records your explicit decision and unlocks the existing PayPal checkout flow. It does not independently verify the recipient or bypass spending limits.</p>
+                  <div className="review-actions"><button disabled={ownReviewBusyId === item.id || !(reviewPasswords[item.id] || '').length} onClick={() => decideOwnReview(item, 'confirm')}>{ownReviewBusyId === item.id ? 'Verifying…' : 'Confirm payment'}</button><button disabled={ownReviewBusyId === item.id} onClick={() => decideOwnReview(item, 'reject')}>Reject payment</button></div>
+                </> : <small className="review-resolution">{item.status === 'REVIEW_APPROVED' ? 'You confirmed this payment. Continue to PayPal from the payment screen when ready.' : item.status === 'BLOCK' ? 'PathGuard blocked this payment. It cannot be confirmed from this page.' : 'You rejected this payment. No PayPal order can be created.'}</small>}
+              </div>;
+            }) : <p className="muted">No payments have been flagged for review on your account. If PathGuard flags a payment, it will appear here.</p>}
+          </div>
+        </section> : activeTab === 'activity' ? <section className="tab-page">
           <div className="page-heading"><div className="eyebrow">PAYMENTS</div><h1>Activity</h1><p>Review your recent payment requests and their status.</p></div>
           <div className="card info activity-page"><h3><History /> Recent activity</h3>
             {history.length ? history.map((x) => { const meta = statusMeta(x.status); return <div className="row" key={x.id}><div className={`status ${meta.tone}`}>{meta.icon}</div><div><b>{x.recipient}</b><small>{x.purpose || 'Payment'}</small><span className="activity-status">{meta.label}</span></div><strong>{x.currency} {Number(x.amount).toLocaleString()}</strong></div>; }) : <p className="muted">Your payment activity will appear here.</p>}
@@ -883,6 +944,7 @@ function App() {
               onPay={() => paypal(false)}
               onPayWithSavedWallet={() => paypal(true)}
               paypalConnected={paypalConnection.connected}
+              onOpenReviews={() => setActiveTab('reviews')}
             />
           )}
         </section>
@@ -1261,7 +1323,7 @@ function AdminDashboard() {
   </section>;
 }
 
-function Risk({ payment, decision, status, loading, onPay, onPayWithSavedWallet, paypalConnected }) {
+function Risk({ payment, decision, status, loading, onPay, onPayWithSavedWallet, paypalConnected, onOpenReviews }) {
   const decisionConfig = {
     ALLOW: ['allow', <CheckCircle2 />, 'Payment approved'],
     REVIEW: ['review', <Clock3 />, 'Payment needs review'],
@@ -1278,7 +1340,7 @@ function Risk({ payment, decision, status, loading, onPay, onPayWithSavedWallet,
     (decision === 'REVIEW' && status === 'REVIEW_APPROVED');
 
   let message = 'Review the payment details before continuing.';
-  if (status === 'REVIEW_PENDING') message = 'A human reviewer must approve this payment before PayPal can be used.';
+  if (status === 'REVIEW_PENDING') message = 'Open Payment Reviews to confirm or reject this payment before PayPal checkout.';
   if (status === 'REVIEW_APPROVED') message = 'Human review passed. This payment can now continue to PayPal.';
   if (status === 'REVIEW_REJECTED') message = 'A human reviewer rejected this payment. No PayPal order can be created.';
   if (status === 'PAYPAL_PENDING_APPROVAL') message = 'A PayPal order exists. Complete the Sandbox checkout to continue.';
@@ -1326,7 +1388,9 @@ function Risk({ payment, decision, status, loading, onPay, onPayWithSavedWallet,
       ) : status === 'REVIEW_REJECTED' ? (
         <div className="blocked review-rejected"><ShieldX /> This payment was rejected during human review.</div>
       ) : status === 'REVIEW_PENDING' ? (
-        <div className="blocked review-held"><Clock3 /> Waiting for human approval before PayPal.</div>
+        <div className="blocked review-held"><Clock3 /> This payment needs your decision. Open Payment Reviews to continue.
+          <button className="review-open-button" onClick={onOpenReviews}>Open Payment Reviews <ArrowRight /></button>
+        </div>
       ) : status === 'COMPLETED' ? (
         <div className="completed-inline"><CheckCircle2 /> Payment captured successfully.</div>
       ) : status === 'PAYPAL_PENDING_APPROVAL' ? (

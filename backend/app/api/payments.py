@@ -121,9 +121,9 @@ def _has_human_approval(payment: PaymentRequest) -> bool:
 
     approved_at = None
     for event in payment.review_events:
-        if event.action == "REJECTED":
+        if event.action in {"REJECTED", "USER_REJECTED"}:
             return False
-        if event.action == "APPROVED":
+        if event.action in {"APPROVED", "USER_CONFIRMED"}:
             approved_at = event.created_at
 
     return approved_at is not None

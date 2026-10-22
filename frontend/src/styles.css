@@ -814,3 +814,21 @@ button{transition:background-color .18s,border-color .18s,color .18s,transform .
 .admin-notice svg{width:15px;height:15px}
 @media(max-width:850px){.admin-heading,.admin-table-heading{align-items:stretch;flex-direction:column}.admin-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.admin-search{min-width:0;width:100%}}
 @media(max-width:520px){.admin-metrics{grid-template-columns:1fr 1fr;gap:8px}.admin-metric{padding:12px;grid-template-columns:28px 1fr;gap:7px}.admin-metric>span{width:28px;height:28px}.admin-metric b{font-size:16px}.admin-switch{flex-wrap:wrap}.admin-table td,.admin-table th{padding:11px 12px}}
+
+
+.self-reviews-page{margin-top:18px}
+.self-review-item{padding:18px 0;border-bottom:1px solid #ffffff0c}
+.self-review-item:last-child{border-bottom:0}
+.self-review-item .lifecycle-status{display:inline-flex;margin:10px 0 6px}
+.self-review-password{display:grid;gap:8px;margin:15px 0 8px;color:#b8c6d9;font-size:11px;font-weight:700}
+.self-review-password input{width:100%;box-sizing:border-box;border:1px solid #ffffff20;border-radius:9px;background:#07111f;color:#eef4ff;padding:12px;font:inherit;outline:none}
+.self-review-password input:focus{border-color:#62a5ff;box-shadow:0 0 0 3px #4288ff1c}
+.self-review-password input:disabled{opacity:.6}
+.self-review-item .review-actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:12px}
+.self-review-item .review-actions button{min-height:38px;padding:10px 13px}
+.self-review-item .review-actions button:first-child{background:#2876ed;color:#fff;border-color:#4388f4}
+.self-review-item .review-actions button:last-child{background:#ffffff06;color:#ffb1b9;border-color:#ff7e8a40}
+.review-resolution{display:block;margin-top:12px;color:#9cabc0;line-height:1.6}
+.review-open-button{display:inline-flex;align-items:center;gap:8px;margin:12px 0 0 27px;border:1px solid #ffffff20;border-radius:8px;padding:9px 12px;background:#ffffff08;color:#e8eef8;font-weight:700;font-size:11px}
+.review-open-button svg{width:14px;height:14px}
+@media(max-width:520px){.self-review-item{padding:15px 0}.self-review-item .review-meta{align-items:flex-start;gap:12px}.self-review-item .review-meta strong{text-align:right}}
