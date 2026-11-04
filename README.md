@@ -136,9 +136,17 @@ python scripts/create_user.py staff@example.com --name "Staff Member" --role rev
 
 Use `--role admin` for an administrator. The script prompts for a password; staff roles cannot be chosen through public registration.
 
-## Hosting
+## Hosted on Render
 
-The hosted app uses a Render static site, a FastAPI web service, and PostgreSQL. The root `render.yaml` describes that setup, including internal database access and the frontend/API connections.
+PathGuard Pay is hosted on [Render](https://render.com). Render runs the frontend, backend API, and database:
+
+| Component | Render service |
+|---|---|
+| React frontend | Static Site — [open the app](https://pathguard-pay.onrender.com) |
+| FastAPI backend | Web Service — [API health check](https://pathguard-pay-api.onrender.com/health) |
+| PostgreSQL database | Managed Render Postgres, connected to the API over Render's private network |
+
+The root `render.yaml` describes this setup, including internal database access and the frontend/API connections.
 
 See [the Render deployment guide](docs/render-deployment.md) for credentials, callback URLs, and verification steps. Applying the Blueprint creates paid resources. Moving from local SQLite to a new hosted database does not automatically move existing users or payment records.
 
