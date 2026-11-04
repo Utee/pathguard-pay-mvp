@@ -8,6 +8,20 @@ on:
 jobs:
   test-backend:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: pathguard_test
+          POSTGRES_PASSWORD: test-only-password
+          POSTGRES_DB: pathguard_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     defaults:
       run:
         working-directory: backend
@@ -27,6 +41,7 @@ jobs:
       - name: Run tests
         env:
           PYTHONPATH: .
+          TEST_POSTGRES_URL: postgresql://pathguard_test:test-only-password@localhost:5432/pathguard_test
         run: pytest -q
 
   test-frontend:
@@ -52,3 +67,4 @@ jobs:
 
       - name: Build frontend
         run: npm run build
+

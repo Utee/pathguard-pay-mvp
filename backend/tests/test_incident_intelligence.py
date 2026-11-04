@@ -49,7 +49,7 @@ def add_event(db, user, event_type, created_at, metadata=None, amount=25, status
         event_type=event_type,
         actor=user.email,
         message="Test event",
-        metadata=metadata,
+        event_metadata=metadata,
         created_at=created_at,
     ))
     db.flush()
@@ -275,3 +275,4 @@ def test_routine_allow_events_do_not_hide_actionable_notifications():
 
     assert any(item["payment_id"] == error_payment.id for item in feed)
     db.close()
+

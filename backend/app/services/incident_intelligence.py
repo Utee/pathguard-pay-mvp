@@ -97,7 +97,7 @@ def detect_incidents(db: Session, user: UserAccount, *, now: datetime | None = N
     for event, _owner_id in events:
         category = EVENT_CATEGORIES.get(event.event_type)
         if event.event_type == "RISK_ASSESSED":
-            details = event.metadata if isinstance(event.metadata, dict) else {}
+            details = event.event_metadata if isinstance(event.event_metadata, dict) else {}
             if details.get("decision") == "BLOCK":
                 category = "risk_blocks"
         if category is None:
@@ -358,7 +358,7 @@ def build_notifications(
 
     notifications = []
     for event, payment in db.execute(statement).all():
-        metadata = event.metadata if isinstance(event.metadata, dict) else {}
+        metadata = event.event_metadata if isinstance(event.event_metadata, dict) else {}
         decision = str(metadata.get("decision", "")).upper()
 
         if event.event_type == "RISK_ASSESSED":
@@ -412,3 +412,4 @@ def build_notifications(
             "created_at": _event_time(event.created_at),
         })
     return notifications[:max(1, min(limit, 50))]
+

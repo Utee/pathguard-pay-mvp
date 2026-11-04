@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -9,6 +10,7 @@ class Settings(BaseSettings):
     # ---------------------------------------------------------
 
     app_name: str = "PathGuard Pay"
+    public_api_url: str | None = None
 
     # ---------------------------------------------------------
     # Database
@@ -80,7 +82,23 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
+    @model_validator(mode="after")
+    def hosted_callback_urls(self):
+        if self.public_api_url:
+            base = self.public_api_url.rstrip("/")
+            callbacks = {
+                "paypal_return_url": "/api/payments/paypal/return",
+                "paypal_cancel_url": "/api/payments/paypal/cancel",
+                "paypal_connection_return_url": "/api/paypal/connection/return",
+                "paypal_connection_cancel_url": "/api/paypal/connection/cancel",
+            }
+            for field, path in callbacks.items():
+                if field not in self.model_fields_set:
+                    setattr(self, field, base + path)
+        return self
+
 
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
