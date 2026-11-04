@@ -209,4 +209,4 @@ If that's useful to you, [visit PathGuard](https://pathguard.cieltech.org/).
 
 ## License
 
-[MIT](LICENSE). Built by [Utee Jacob](https://github.com/Utee) and contributors.
+[MIT](LICENSE). Built by [Utee Jacob](https://utee.github.io/) .
