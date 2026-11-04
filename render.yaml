@@ -26,11 +26,16 @@ services:
           type: web
           name: pathguard-pay-api
           envVarKey: RENDER_EXTERNAL_URL
-      # Set both to the frontend's exact HTTPS origin, no trailing slash.
       - key: CORS_ALLOWED_ORIGINS
-        sync: false
+        fromService:
+          type: web
+          name: pathguard-pay
+          envVarKey: RENDER_EXTERNAL_URL
       - key: PAYPAL_FRONTEND_URL
-        sync: false
+        fromService:
+          type: web
+          name: pathguard-pay
+          envVarKey: RENDER_EXTERNAL_URL
       - key: PAYPAL_BASE_URL
         value: https://api-m.sandbox.paypal.com
       - key: PAYPAL_CLIENT_ID
