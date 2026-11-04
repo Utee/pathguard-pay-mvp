@@ -27,6 +27,17 @@ import {
   Users,
   Search,
   RefreshCw,
+  Plus,
+  ArrowUpRight,
+  ArrowDownLeft,
+  ChevronRight,
+  Menu,
+  X,
+  LogOut,
+  Sparkles,
+  Eye,
+  EyeOff,
+  LockKeyhole,
 } from 'lucide-react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
@@ -41,7 +52,7 @@ function apiFetch(input, options = {}) {
 }
 
 const STATUS_LABELS = {
-  ALLOW: 'Approved',
+  ALLOW: 'Checks passed',
   BLOCK: 'Blocked',
   REVIEW_PENDING: 'Awaiting review',
   REVIEW_APPROVED: 'Review approved',
@@ -49,10 +60,14 @@ const STATUS_LABELS = {
   PAYPAL_PENDING_APPROVAL: 'Awaiting PayPal approval',
   PAYPAL_PENDING_CAPTURE: 'Capturing payment',
   COMPLETED: 'Completed',
+  CANCELLED: 'Cancelled',
+  PAYPAL_CAPTURE_ERROR: 'Checkout issue',
+  ANALYZED: 'Checked',
+  REVIEW: 'Needs review',
 };
 
 function statusMeta(status) {
-  if (status === 'BLOCK' || status === 'REVIEW_REJECTED') {
+  if (['BLOCK', 'REVIEW_REJECTED', 'PAYPAL_CAPTURE_ERROR'].includes(status)) {
     return { tone: 'danger', label: STATUS_LABELS[status] || status, icon: <ShieldX /> };
   }
   if (status === 'ALLOW' || status === 'COMPLETED') {
@@ -75,6 +90,15 @@ function App() {
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState('');
   const [activeTab, setActiveTab] = useState('overview');
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  function navigate(tab) { setActiveTab(tab); setMobileNavOpen(false); }
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+    const close = (event) => { if (event.key === 'Escape') setMobileNavOpen(false); };
+    window.addEventListener('keydown', close);
+    return () => window.removeEventListener('keydown', close);
+  }, [mobileNavOpen]);
   const [instruction, setInstruction] = useState('');
   const [payment, setPayment] = useState(null);
   const [history, setHistory] = useState([]);
@@ -278,6 +302,8 @@ function App() {
       setPaypalConnectionNotice('');
     }
 
+    if (paypalState || paymentId) setActiveTab('payments');
+    else if (paypalConnectState) setActiveTab('wallet');
     const savedPaymentId = localStorage.getItem('pathguard_paypal_payment_id');
     const effectivePaymentId = paymentId || savedPaymentId;
 
@@ -736,38 +762,38 @@ function App() {
       <div className="auth-shell">
         <div className="auth-layout">
           <section className="auth-story">
-            <div className="brand auth-brand"><div className="logo"><ShieldCheck /></div><div><b>PathGuard Pay</b><small>Payment protection</small></div></div>
-            <span className="auth-overline">A safer way to pay</span>
-            <h1>Know what happens before money moves.</h1>
-            <p>PathGuard checks each payment request against risk signals and your spending limits before it reaches checkout.</p>
-            <div className="auth-steps">
-              <Step n="01" t="Describe the payment" d="Tell the payment agent who you are paying and why." />
-              <Step n="02" t="Review the decision" d="See the recipient, amount and safety checks in one place." />
-              <Step n="03" t="Continue with confidence" d="Approved payments can continue to PayPal checkout." />
+            <Brand />
+            <div className="auth-story-copy"><span className="auth-overline"><span /> Thoughtful payments. By design.</span>
+            <h1>A little pause.<br /><span>A safer payment.</span></h1>
+            <p>Put a clear safety check between your intent and your next payment.</p></div>
+            <div className="auth-visual" aria-label="Payment safety workflow">
+              <div className="visual-instruction"><span><Sparkles /> YOUR INSTRUCTION</span><p>“Pay Jordan $240 for the brand identity.”</p></div>
+              <div className="visual-connector" /><div className="visual-check"><span className="visual-shield"><ShieldCheck /></span><div><b>Clarity before checkout</b><small>Details · Risk signals · Spending limits</small></div><CheckCircle2 /></div>
+              <div className="visual-connector" /><div className="visual-destination"><LockKeyhole /> Your decision comes first <ArrowRight /></div>
             </div>
-            <small className="auth-sandbox"><ShieldCheck /> PayPal Sandbox · No real money is moved</small>
+            <small className="auth-sandbox"><ShieldCheck /> Built with PayPal Sandbox <span>No real money moves.</span></small>
           </section>
           <form className="auth-card" onSubmit={submitAuth}>
-          <div className="eyebrow">YOUR ACCOUNT</div>
-          <h2>{authMode === 'register' ? 'Create your account' : 'Sign in'}</h2>
+          <span className="auth-form-icon"><LockKeyhole /></span><div className="eyebrow">YOUR PAYMENT WORKSPACE</div>
+          <h2>{authMode === 'register' ? 'Start with peace of mind.' : 'Welcome back.'}</h2>
           <p>{authMode === 'register'
             ? 'Your payments and spending limits are private to your account.'
-            : 'Enter your details to continue to PathGuard Pay.'}</p>
+            : 'Sign in to keep your next payment in check.'}</p>
           {authMode === 'register' && (
             <label className="auth-field">Display name
               <input autoComplete="name" required maxLength={120} value={authName} onChange={(event) => setAuthName(event.target.value)} />
             </label>
           )}
           <label className="auth-field">Email
-            <input type="email" autoComplete="email" required value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} />
+            <input type="email" placeholder="you@example.com" autoComplete="email" required value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} />
           </label>
           <label className="auth-field">Password
-            <input type="password" autoComplete={authMode === 'register' ? 'new-password' : 'current-password'} minLength={authMode === 'register' ? 12 : 1} required value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} />
+            <span className="password-input"><input type={showPassword ? 'text' : 'password'} placeholder={authMode === 'register' ? 'At least 12 characters' : 'Enter your password'} autoComplete={authMode === 'register' ? 'new-password' : 'current-password'} minLength={authMode === 'register' ? 12 : 1} required value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} /><button type="button" aria-label={showPassword ? 'Hide password' : 'Show password'} onClick={() => setShowPassword(!showPassword)}>{showPassword ? <EyeOff /> : <Eye />}</button></span>
           </label>
-          {authMode === 'register' && <small className="auth-note">Use at least 12 characters. Staff roles are assigned separately by an administrator.</small>}
+          {authMode === 'register' && <small className="auth-note">Use at least 12 characters to protect your account.</small>}
           {authError && <div className="error">{authError}</div>}
           <button className="primary auth-submit" type="submit" disabled={authBusy}>
-            {authBusy ? 'Please wait…' : authMode === 'register' ? 'Create account' : 'Sign in'}
+            {authBusy ? <><Loader2 className="spin" /> Please wait…</> : <>{authMode === 'register' ? 'Create account' : 'Sign in'} <ArrowRight /></>}
           </button>
           <button className="auth-switch" type="button" onClick={() => {
             setAuthMode((mode) => mode === 'register' ? 'login' : 'register');
@@ -783,34 +809,36 @@ function App() {
 
   return (
     <>
-      <header>
-        <div className="brand">
-          <div className="logo"><ShieldCheck /></div>
-          <div>
-            <b>PathGuard Pay</b>
-            <small>Payment protection workspace</small>
-          </div>
-        </div>
+      <a className="skip-link" href="#workspace-main">Skip to content</a>
+      {mobileNavOpen && <button className="nav-backdrop" aria-label="Close navigation" onClick={() => setMobileNavOpen(false)} />}
+      <header className={`app-sidebar ${mobileNavOpen ? 'is-open' : ''}`}>
+        <Brand compact />
+        <button className="sidebar-create" onClick={() => navigate('payments')}><Plus /> New payment <span>↗</span></button>
         <nav className="workspace-nav" aria-label="Main navigation">
           <span className="nav-section-label">WORKSPACE</span>
-          <button className={activeTab === 'overview' ? 'nav-active' : ''} onClick={() => setActiveTab('overview')}><LayoutDashboard /> Overview</button>
-          <button className={activeTab === 'payments' ? 'nav-active' : ''} onClick={() => setActiveTab('payments')}><CreditCard /> Make a payment</button>
-          <button className={activeTab === 'activity' ? 'nav-active' : ''} onClick={() => setActiveTab('activity')}><History /> Transactions</button>
-          <button className={activeTab === 'reviews' ? 'nav-active' : ''} onClick={() => setActiveTab('reviews')}><ClipboardCheck /> Payment Reviews{ownReviews.some((item) => item.status === 'REVIEW_PENDING') && <span className="nav-count">{ownReviews.filter((item) => item.status === 'REVIEW_PENDING').length}</span>}</button>
-          <span className="nav-section-label nav-section-spaced">PROTECTION</span>
-          <button className={activeTab === 'security' ? 'nav-active' : ''} onClick={() => setActiveTab('security')}><ShieldCheck /> Security & limits</button>
-          <button className={activeTab === 'wallet' ? 'nav-active' : ''} onClick={() => setActiveTab('wallet')}><Wallet /> Payment methods</button>
-          <button className={activeTab === 'notifications' ? 'nav-active' : ''} onClick={() => setActiveTab('notifications')}><Bell /> Notifications{notifications.length > 0 && <span className="nav-count">{notifications.length}</span>}</button>
-          {user.role === 'admin' && <button className={activeTab === 'admin' ? 'nav-active' : ''} onClick={() => setActiveTab('admin')}><Users /> Admin</button>}
+          {[
+            ['overview', LayoutDashboard, 'Overview'],
+            ['activity', History, 'Transactions'],
+            ['reviews', ClipboardCheck, 'Payment reviews'],
+            ['intelligence', Activity, 'Insights'],
+          ].map(([tab, Icon, label]) => <button key={tab} aria-current={activeTab === tab ? 'page' : undefined} className={activeTab === tab ? 'nav-active' : ''} onClick={() => navigate(tab)}><Icon /> {label}{tab === 'reviews' && ownReviews.filter(x => x.status === 'REVIEW_PENDING').length > 0 && <span className="nav-count">{ownReviews.filter(x => x.status === 'REVIEW_PENDING').length}</span>}</button>)}
+          <span className="nav-section-label nav-section-spaced">YOUR ACCOUNT</span>
+          {[
+            ['security', ShieldCheck, 'Spending & limits'],
+            ['wallet', Wallet, 'Payment methods'],
+            ['notifications', Bell, 'Notifications'],
+            ...(user.role === 'admin' ? [['admin', Users, 'Administration']] : []),
+          ].map(([tab, Icon, label]) => <button key={tab} aria-current={activeTab === tab ? 'page' : undefined} className={activeTab === tab ? 'nav-active' : ''} onClick={() => navigate(tab)}><Icon /> {label}</button>)}
         </nav>
-        <div className="account-controls">
-          <span className="user-avatar">{(user.display_name || 'U').slice(0, 1).toUpperCase()}</span>
-          <span className="account-label"><b>{user.display_name}</b><small>{user.role}</small></span>
-          <button className="signout" onClick={signOut}>Sign out</button>
-        </div>
+        <div className="sidebar-note"><ShieldCheck /><b>A moment of clarity.</b><p>Every payment starts with a check. You stay in control.</p><span><i /> PayPal Sandbox</span></div>
+        <div className="account-controls"><span className="user-avatar">{(user.display_name || 'U').slice(0, 1).toUpperCase()}</span><span className="account-label"><b>{user.display_name}</b><small>{user.role === 'customer' ? 'Personal workspace' : user.role}</small></span><button className="signout" title="Sign out" aria-label="Sign out" onClick={signOut}><LogOut /></button></div>
       </header>
-
-      <main className={activeTab !== 'overview' ? 'single-view' : ''} data-view={activeTab}>
+      <div className="workspace-topbar">
+        <div className="topbar-breadcrumb"><button className="mobile-menu icon-button" aria-label={mobileNavOpen ? 'Close navigation' : 'Open navigation'} aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen(!mobileNavOpen)}>{mobileNavOpen ? <X /> : <Menu />}</button><span>Workspace</span><ChevronRight /><b>{({overview:'Overview',payments:'New payment',activity:'Transactions',reviews:'Payment reviews',intelligence:'Insights',security:'Spending & limits',wallet:'Payment methods',notifications:'Notifications',admin:'Administration'})[activeTab]}</b></div>
+        <div className="topbar-actions"><span className="environment-tag"><i /> Sandbox</span><button className="icon-button" aria-label="View notifications" onClick={() => navigate('notifications')}><Bell />{notifications.length > 0 && <i />}</button><span className="topbar-avatar">{(user.display_name || 'U').slice(0,1).toUpperCase()}</span></div>
+      </div>
+      <main id="workspace-main" className="workspace-main" data-view={activeTab}>
+        {activeTab === 'overview' && <Overview user={user} history={history} overview={intelligenceOverview} limits={limitSummary} reviews={ownReviews} navigate={navigate} openPayment={(id) => { restorePayment(id); navigate('payments'); }} />}
         {activeTab === 'admin' && user.role === 'admin' ? <AdminDashboard /> : activeTab === 'reviews' ? <section className="tab-page">
           <div className="page-heading"><div className="eyebrow">PAYMENT SAFETY</div><h1>Payment Reviews</h1><p>Review payments flagged by PathGuard before starting PayPal checkout. Your password is required to confirm a payment.</p></div>
           {ownReviewError && <div className="error"><ShieldAlert /><span>{ownReviewError}</span></div>}
@@ -836,16 +864,14 @@ function App() {
           </div>
         </section> : activeTab === 'activity' ? <section className="tab-page">
           <div className="page-heading"><div className="eyebrow">PAYMENTS</div><h1>Activity</h1><p>Review your recent payment requests and their status.</p></div>
-          <div className="card info activity-page"><h3><History /> Recent activity</h3>
-            {history.length ? history.map((x) => { const meta = statusMeta(x.status); return <div className="row" key={x.id}><div className={`status ${meta.tone}`}>{meta.icon}</div><div><b>{x.recipient}</b><small>{x.purpose || 'Payment'}</small><span className="activity-status">{meta.label}</span></div><strong>{x.currency} {Number(x.amount).toLocaleString()}</strong></div>; }) : <p className="muted">Your payment activity will appear here.</p>}
-          </div>
+          <Transactions history={history} openPayment={(id) => { restorePayment(id); navigate('payments'); }} />
         </section> : activeTab === 'notifications' ? <section className="tab-page">
           <div className="page-heading"><div className="eyebrow">ACCOUNT UPDATES</div><h1>Notifications</h1><p>Recent payment and policy events from your account.</p></div>
           <div className="card info notifications-page"><h3><Bell /> Recent notifications <span className="queue-count">{notifications.length}</span></h3>
             {notifications.length ? notifications.map((item) => <div className="notification-item" key={item.id}><span className={`notification-dot ${item.severity}`}></span><div className="notification-content"><div className="notification-title-row"><b>{item.title}</b><span className={`incident-severity ${item.severity}`}>{item.severity}</span></div><p>{item.message}</p><small>{item.recipient} · {item.currency} {Number(item.amount).toLocaleString()} · {item.created_at ? new Date(item.created_at).toLocaleString() : ''}</small></div></div>) : <p className="muted">No recent notifications.</p>}
           </div>
         </section> : <>
-        <section className="payment-workflow" style={{ display: ['overview', 'payments'].includes(activeTab) ? undefined : 'none' }}>
+        <section className="payment-workflow" style={{ display: activeTab === 'payments' ? undefined : 'none' }}>
           {paypalResult?.state === 'completed' && (
             <div className="result-card completed">
               <div className="result-icon"><PartyPopper /></div>
@@ -916,17 +942,20 @@ function App() {
             </div>
           )}
 
-          <div className="welcome-row"><div><div className="eyebrow">PAYMENTS OVERVIEW <span className="live-dot" /> LIVE WORKSPACE</div>
-          <h1>Payment command center</h1></div><span className="sandbox"><i /> PayPal Sandbox</span></div>
-          <p className="intro">
-            Create a payment request and review its safety decision before checkout.
-          </p>
+          <div className="page-heading"><div className="eyebrow">CHECK FIRST. PAY SECOND.</div><h1>A thoughtful way to pay.</h1><p>Start with a few words. We’ll help you check the details.</p></div>
+          <ol className="payment-stepper" aria-label="Payment progress">
+            <li className={!payment ? 'current' : 'done'}><span>{payment ? <CheckCircle2 /> : '1'}</span><div><b>Describe</b><small>Who, how much, and why</small></div></li>
+            <li className={payment && currentStatus !== 'COMPLETED' ? 'current' : currentStatus === 'COMPLETED' ? 'done' : ''}><span>{currentStatus === 'COMPLETED' ? <CheckCircle2 /> : '2'}</span><div><b>Check & review</b><small>Your safety decision</small></div></li>
+            <li className={currentStatus === 'COMPLETED' ? 'done' : ''}><span>{currentStatus === 'COMPLETED' ? <CheckCircle2 /> : '3'}</span><div><b>PayPal checkout</b><small>Complete your payment</small></div></li>
+          </ol>
 
           <div className="card composer">
-            <div className="composer-heading"><div><span className="composer-icon"><ArrowRight /></span><span><label>New payment request</label><small>Describe the payment in your own words</small></span></div><span className="secure-label"><ShieldCheck /> PROTECTED</span></div>
+            <div className="composer-heading"><div><span className="composer-icon"><Sparkles /></span><span><label>New payment request</label><small>Describe the payment in your own words</small></span></div><span className="secure-label"><LockKeyhole /> Private to your account</span></div>
             <textarea
               value={instruction}
-              onChange={(e) => setInstruction(e.target.value)}
+              aria-label="Describe your payment"
+              disabled={loading || payLoading}
+              onChange={(e) => { setInstruction(e.target.value); setPayment(null); setError(''); setPaypalResult(null); }}
               placeholder={'For example: “Pay Jordan $240 for the brand identity project”'}
               onKeyDown={(e) => {
                 if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') analyze();
@@ -938,27 +967,30 @@ function App() {
                 {[
                   'Pay John $200 for the website',
                   'Pay Sarah $150 for the logo',
-                  'Pay John $10000 for the website',
+                  'Pay Alex $75 for consulting',
                 ].map((x) => (
-                  <button key={x} onClick={() => setInstruction(x)}>{x}</button>
+                  <button key={x} disabled={loading || payLoading} onClick={() => { setInstruction(x); setPayment(null); setPaypalResult(null); }}>{x}</button>
                 ))}
               </div>
 
               <button
                 className="primary"
-                disabled={loading || !instruction.trim()}
+                disabled={loading || payLoading || !instruction.trim()}
                 onClick={analyze}
               >
                 {loading ? (
                   <><Loader2 className="spin" /> Analyzing</>
                 ) : (
-                  <>Analyze payment <ArrowRight /></>
+                  <>Check payment <ArrowRight /></>
                 )}
               </button>
             </div>
           </div>
 
-          {error && <div className="error"><ShieldAlert /> <span>{error}</span></div>}
+          <div className="payment-reassurance"><ShieldCheck /><span>Your instruction creates a request. Money moves only after the required checks and checkout.</span><kbd>⌘ / Ctrl ↵</kbd></div>
+          {!payment && !loading && <div className="payment-empty"><span><ShieldCheck /></span><h3>A clear picture before you pay.</h3><p>Your recipient, amount, risk signals, and next step will appear here after a check.</p></div>}
+          {loading && <div className="analysis-loading" role="status"><Loader2 className="spin" /><div><b>Making sense of your payment…</b><p>Reading your instruction and checking your spending limits.</p></div></div>}
+          {error && <div className="error" role="alert"><ShieldAlert /> <span>{error}</span></div>}
 
           {payment && (
             <Risk
@@ -974,14 +1006,14 @@ function App() {
           )}
         </section>
 
-        <aside className="workspace-panels" style={{ display: ['overview', 'security', 'wallet', 'intelligence'].includes(activeTab) ? undefined : 'none' }}>
+        <aside className="workspace-panels" style={{ display: ['security', 'wallet', 'intelligence'].includes(activeTab) ? undefined : 'none' }}>
           {activeTab !== 'overview' && <div className="page-heading panel-page-heading">
             <div className="eyebrow">{activeTab === 'wallet' ? 'CONNECTED ACCOUNTS' : activeTab === 'security' ? 'PAYMENT PROTECTION' : 'RISK & OPERATIONS'}</div>
             <h1>{activeTab === 'wallet' ? 'Payment methods' : activeTab === 'security' ? 'Security & limits' : 'Payment intelligence'}</h1>
             <p>{activeTab === 'wallet' ? 'Manage the PayPal Sandbox wallet connected to your account.' : activeTab === 'security' ? 'Control your spending boundaries and see how much capacity remains.' : 'Understand payment outcomes, recurring signals, and recommended actions.'}</p>
           </div>}
-          <div className="card info limits-card paypal-connection-card" style={{ display: ['overview', 'wallet'].includes(activeTab) ? undefined : 'none' }}>
-            <h3><Link2 /> PayPal account</h3>
+          <div className="card info limits-card paypal-connection-card" style={{ display: activeTab === 'wallet' ? undefined : 'none' }}>
+            <div className="wallet-banner"><span className="wallet-monogram">P</span><span>PAYMENT PROVIDER</span><b>PayPal</b><small>Sandbox wallet</small></div><h3><Link2 /> Your connected wallet</h3>
             {paypalConnection.connected ? (
               <>
                 <div className="paypal-connection-state">
@@ -1012,8 +1044,8 @@ function App() {
             <small className="limits-footnote">Connecting a wallet is separate from PathGuard approval. Every payment still passes risk checks, manual review when required, and your spending limits. A saved wallet may be charged without a separate PayPal checkout confirmation for every payment; use this connection only if you consent to that flow.</small>
           </div>
 
-          <div className="card info limits-card spending-limits-panel" style={{ display: ['overview', 'security'].includes(activeTab) ? undefined : 'none' }}>
-            <h3><Settings2 /> Spending limits</h3>
+          <div className="card info limits-card spending-limits-panel" style={{ display: activeTab === 'security' ? undefined : 'none' }}>
+            <div className="section-intro"><span className="section-icon"><ShieldCheck /></span><div><h2>Your boundaries. Your control.</h2><p>Set limits that work for you.</p></div></div><h3><Settings2 /> Spending limits</h3>
             <p className="limits-intro">Set your budget before paying. PathGuard checks these caps before creating a PayPal order and again before capture.</p>
             <div className="limits-grid">
               <label className="limit-field">Daily limit (USD)
@@ -1054,7 +1086,7 @@ function App() {
             <small className="limits-footnote">These limits and payment history apply only to your account. Limits are denominated in USD; non-USD payments are blocked until currency conversion is supported.</small>
           </div>
 
-          <div className="card info intelligence-panel" style={{ display: ['overview', 'intelligence'].includes(activeTab) ? undefined : 'none' }}>
+          <div className="card info intelligence-panel" style={{ display: activeTab === 'intelligence' ? undefined : 'none' }}>
             <h3><Activity /> Payment intelligence</h3>
             <p className="limits-intro">
               {intelligenceOverview?.scope === 'organization'
@@ -1124,7 +1156,7 @@ function App() {
             <small className="limits-footnote">Signals are based on recorded audit events, not predictions. Suggested actions are guidance only; they never bypass risk decisions or spending limits.</small>
           </div>
 
-          {['reviewer', 'admin'].includes(user.role) && ['overview', 'intelligence'].includes(activeTab) && <div className="card info">
+          {['reviewer', 'admin'].includes(user.role) && activeTab === 'intelligence' && <div className="card info">
             <h3><Clock3 /> Human review queue <span className="queue-count">{reviewQueue.length}</span></h3>
             {reviewQueue.length ? reviewQueue.map((item) => (
               <div className="review-item" key={item.id}>
@@ -1148,9 +1180,63 @@ function App() {
         </>}
       </main>
 
-      <footer>PathGuard Pay · AI → PathGuard → PayPal</footer>
+      <footer><span><ShieldCheck /> PathGuard Pay</span><span>Intent. Clarity. Checkout.</span><span>Sandbox environment · No real money</span></footer>
     </>
   );
+}
+
+function Brand({ compact = false }) {
+  return <div className={`brand ${compact ? 'compact' : ''}`}><span className="logo"><ShieldCheck /></span><div><b>PathGuard<span> Pay</span></b><small>Clarity before checkout</small></div></div>;
+}
+
+const money = (value) => Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+function EmptyState({ icon: Icon = History, title, description, action }) {
+  return <div className="empty-state"><span><Icon /></span><h3>{title}</h3><p>{description}</p>{action}</div>;
+}
+
+function Overview({ user, history, overview, limits, reviews, navigate, openPayment }) {
+  const pending = reviews.filter(item => item.status === 'REVIEW_PENDING').length;
+  const total = overview?.total_payments;
+  const blocked = overview?.blocked_payments;
+  const remaining = limits?.daily_remaining;
+  const ratio = limits?.daily_limit ? Math.min(100, Math.max(0, Number(limits.daily_used || 0) / limits.daily_limit * 100)) : 0;
+  const metrics = [
+    ['Completed spend', overview ? `$${money(overview.completed_spend_usd)}` : '—', CircleDollarSign, 'Completed payments only'],
+    ['Payment checks', total == null ? '—' : total.toLocaleString(), ShieldCheck, 'Requests checked before checkout'],
+    ['Needs your review', pending, ClipboardCheck, pending ? 'Your decision is needed' : 'Nothing waiting on you'],
+    ['Blocked requests', blocked == null ? '—' : blocked.toLocaleString(), ShieldX, 'Stopped by payment checks'],
+  ];
+  return <section className="overview-page">
+    <div className="dashboard-heading"><div><div className="eyebrow">YOUR PAYMENT WORKSPACE</div><h1>Hello, {user.display_name?.split(' ')[0] || 'there'}<span className="heading-dot">.</span></h1><p>A clearer view of your payments. A little more peace of mind.</p></div><button className="primary" onClick={() => navigate('payments')}><Plus /> New payment</button></div>
+    <div className="metric-grid">{metrics.map(([label, value, Icon, note], index) => <div className={`metric-card metric-${index}`} key={label}><div className="metric-label"><span>{label}</span><Icon /></div><strong>{value}</strong><small>{index === 2 && pending > 0 ? <span className="attention-dot" /> : null}{note}</small></div>)}</div>
+    {overview?.scope === 'organization' && <p className="scope-note">Spend, checks, and blocks cover the organization. Reviews and recent activity below belong to your account.</p>}
+    <div className="overview-grid">
+      <div className="overview-primary">
+        <div className="clarity-card"><div className="clarity-copy"><span className="eyebrow"><Sparkles /> A BETTER MOMENT TO CHECK</span><h2>Big plans.<br />Thoughtful payments.</h2><p>Describe what you want to pay. Check the details and risk signals before you continue.</p><button className="text-action" onClick={() => navigate('payments')}>Make your next payment <ArrowUpRight /></button></div><div className="clarity-art" aria-hidden="true"><div className="orbit orbit-one" /><div className="orbit orbit-two" /><span className="shield-tile"><ShieldCheck /></span><span className="orbit-chip"><CheckCircle2 /> Check first</span></div></div>
+        <div className="card recent-card"><div className="section-heading"><div><h2>Recent activity</h2><p>Your latest payment requests, at a glance.</p></div><button className="text-action" onClick={() => navigate('activity')}>View all <ArrowUpRight /></button></div>
+          {history.length ? <div className="recent-list">{history.slice(0,5).map(item => <PaymentRow key={item.id} item={item} onClick={() => openPayment(item.id)} />)}</div> : <EmptyState title="Your story starts here." description="Check your first payment and its progress will appear here." action={<button className="secondary" onClick={() => navigate('payments')}>Create a payment <ArrowRight /></button>} />}
+        </div>
+      </div>
+      <div className="overview-secondary">
+        <div className="card budget-card"><div className="section-heading"><h2>Room to pay</h2><span className="mini-label">TODAY · USD</span></div><div className="budget-ring" style={{'--used': `${ratio}%`}}><div><span>Available today</span><strong>{!limits ? '—' : remaining == null ? 'No daily cap' : `$${money(remaining)}`}</strong><small>{limits?.timezone?.replaceAll('_',' ') || 'Your spending limits'}</small></div></div><div className="budget-legend"><span><i /> Used or reserved</span><b>{limits ? `$${money(limits.daily_used)}` : '—'}</b></div><div className="budget-legend"><span><i /> Daily limit</span><b>{!limits ? '—' : limits.daily_limit == null ? 'No cap' : `$${money(limits.daily_limit)}`}</b></div><button className="secondary" onClick={() => navigate('security')}><Settings2 /> Manage spending limits</button></div>
+        <div className={`card attention-card ${pending ? 'has-pending' : ''}`}><div className="attention-icon">{pending ? <ClipboardCheck /> : <CheckCircle2 />}</div><h2>{pending ? `${pending} payment${pending > 1 ? 's' : ''} to review` : 'You’re all caught up.'}</h2><p>{pending ? 'Take a moment to review the details before deciding what happens next.' : 'No payment requests are waiting for your confirmation.'}</p><button className="text-action" onClick={() => navigate('reviews')}>{pending ? 'Review payments' : 'View payment reviews'} <ArrowRight /></button></div>
+        <div className="sandbox-note"><LockKeyhole /><p><b>A space to try things.</b>This workspace uses PayPal Sandbox. No real money is moved.</p></div>
+      </div>
+    </div>
+  </section>;
+}
+
+function PaymentRow({ item, onClick }) {
+  const meta = statusMeta(item.status);
+  return <button className="payment-row" onClick={onClick} aria-label={`View payment to ${item.recipient}, ${item.currency} ${money(item.amount)}, ${meta.label}`}><span className={`payment-avatar ${meta.tone}`}>{(item.recipient || '?').slice(0,1).toUpperCase()}</span><span className="payment-person"><b>{item.recipient}</b><small>{item.purpose || 'Payment request'}</small></span><span className="payment-date">{item.created_at ? new Date(item.created_at).toLocaleDateString(undefined,{month:'short',day:'numeric'}) : '—'}</span><span className={`status-pill ${meta.tone}`}>{meta.icon}{meta.label}</span><span className="payment-amount"><b>{item.currency} {money(item.amount)}</b><small>Payment request</small></span><ChevronRight className="row-chevron" /></button>;
+}
+
+function Transactions({ history, openPayment }) {
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState('all');
+  const filtered = history.filter(item => [item.recipient,item.purpose,item.status].filter(Boolean).join(' ').toLowerCase().includes(query.toLowerCase()) && (filter === 'all' || (filter === 'completed' ? item.status === 'COMPLETED' : filter === 'review' ? ['REVIEW_PENDING','REVIEW_APPROVED'].includes(item.status) : ['BLOCK','REVIEW_REJECTED'].includes(item.status))));
+  return <div className="card transactions-card"><div className="transaction-toolbar"><div className="filter-tabs" aria-label="Filter transactions">{[['all','All activity'],['completed','Completed'],['review','In review'],['blocked','Stopped']].map(([value,label]) => <button key={value} aria-pressed={filter === value} className={filter === value ? 'selected' : ''} onClick={() => setFilter(value)}>{label}</button>)}</div><label className="search-field"><Search /><input aria-label="Search transactions" placeholder="Search transactions…" value={query} onChange={event => setQuery(event.target.value)} /></label></div><div className="transaction-labels"><span>RECIPIENT / PURPOSE</span><span>DATE</span><span>STATUS</span><span>AMOUNT</span></div>{filtered.length ? filtered.map(item => <PaymentRow key={item.id} item={item} onClick={() => openPayment(item.id)} />) : <EmptyState icon={query || filter !== 'all' ? Search : History} title={history.length ? 'No matching payments.' : 'No payments just yet.'} description={history.length ? 'Try a different search or activity filter.' : 'Your payment requests and their progress will appear here.'} />}<div className="table-footer">Showing {filtered.length} of {history.length} recent requests</div></div>;
 }
 
 function RecipientProfile({ profile, currency }) {
@@ -1350,7 +1436,7 @@ function AdminDashboard() {
 
 function Risk({ payment, decision, status, loading, onPay, onPayWithSavedWallet, paypalConnected, onOpenReviews }) {
   const decisionConfig = {
-    ALLOW: ['allow', <CheckCircle2 />, 'Payment approved'],
+    ALLOW: ['allow', <CheckCircle2 />, 'Ready for your review'],
     REVIEW: ['review', <Clock3 />, 'Payment needs review'],
     BLOCK: ['block', <ShieldX />, 'Payment blocked'],
   };
@@ -1382,7 +1468,7 @@ function Risk({ payment, decision, status, loading, onPay, onPayWithSavedWallet,
           <p>{message}</p>
         </div>
         <div className="score">
-          <b>{payment?.risk?.risk_score ?? 0}</b><small>/100</small>
+          <span className="score-label">RISK SCORE</span><b>{payment?.risk?.risk_score ?? 0}</b><small>/100</small>
         </div>
       </div>
 
@@ -1404,8 +1490,8 @@ function Risk({ payment, decision, status, loading, onPay, onPayWithSavedWallet,
       <div className="reasons">
         <b><ShieldAlert /> Why PathGuard decided this</b>
         {reasons.length
-          ? reasons.map((r, i) => <p key={`${r}-${i}`}>✓ {r}</p>)
-          : <p>✓ No additional risk reasons were reported.</p>}
+          ? reasons.map((r, i) => <p key={`${r}-${i}`}><span className="reason-marker">{decision === 'ALLOW' ? <CheckCircle2 /> : <ShieldAlert />}</span>{r}</p>)
+          : <p>No additional risk reasons were reported.</p>}
       </div>
 
       {decision === 'BLOCK' ? (
@@ -1443,3 +1529,4 @@ function Risk({ payment, decision, status, loading, onPay, onPayWithSavedWallet,
 }
 
 createRoot(document.getElementById('root')).render(<App />);
+
