@@ -262,6 +262,9 @@ Ensure the backend's CORS allowlist includes the frontend origin you use.
 
 ## Testing
 
+For hosted setup, see [Render deployment](docs/render-deployment.md). The root
+`render.yaml` defines the frontend, paid API, and paid PostgreSQL database.
+
 Run the backend tests from the backend directory:
 
 ```bash
@@ -334,3 +337,4 @@ The goal is not to replace the payment provider. It is to add an explainable che
 ---
 
 Built as a hackathon MVP by [Utee Jacob](https://github.com/Utee) and contributors.
+

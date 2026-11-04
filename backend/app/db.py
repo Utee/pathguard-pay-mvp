@@ -1,13 +1,21 @@
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.core.config import get_settings
 
 settings = get_settings()
 
-connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
+def database_engine_options(database_url: str) -> tuple:
+    url = make_url(database_url)
+    if url.drivername in {"postgres", "postgresql"}:
+        url = url.set(drivername="postgresql+psycopg")
+    if url.get_backend_name() == "sqlite":
+        return url, {"connect_args": {"check_same_thread": False}}
+    return url, {"pool_pre_ping": True, "pool_size": 5, "max_overflow": 5}
 
-engine = create_engine(settings.database_url, connect_args=connect_args)
+database_url, engine_options = database_engine_options(settings.database_url)
+engine = create_engine(database_url, **engine_options)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
@@ -80,3 +88,4 @@ def get_db():
         yield db
     finally:
         db.close()
+

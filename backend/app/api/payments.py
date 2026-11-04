@@ -60,7 +60,7 @@ def _audit(
             event_type=event_type,
             actor=actor,
             message=message,
-            metadata=metadata,
+            event_metadata=metadata,
         )
     )
 
@@ -743,7 +743,7 @@ def get_payment(
                     "event_type": event.event_type,
                     "actor": event.actor,
                     "message": event.message,
-                    "metadata": event.metadata,
+                    "metadata": event.event_metadata,
                     "created_at": event.created_at,
                 }
             ).model_dump(mode="json")
@@ -779,7 +779,7 @@ def payment_audit(
             event_type=event.event_type,
             actor=event.actor,
             message=event.message,
-            metadata=event.metadata,
+            metadata=event.event_metadata,
             created_at=event.created_at,
         )
         for event in payment.audit_events
@@ -933,3 +933,4 @@ async def capture_paypal_order(
         status=result["status"],
         capture_id=result.get("capture_id"),
     )
+

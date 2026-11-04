@@ -89,7 +89,7 @@ def confirm_own_review(
             event_type="SPENDING_LIMIT_BLOCKED",
             actor=current_user.email,
             message="User confirmation denied because a configured spending limit would be exceeded.",
-            metadata={"violations": violations},
+            event_metadata={"violations": violations},
         ))
         db.commit()
         raise HTTPException(
@@ -112,7 +112,7 @@ def confirm_own_review(
         event_type="USER_CONFIRMED_REVIEW",
         actor=current_user.email,
         message="User explicitly confirmed a payment flagged for review after password verification.",
-        metadata={"risk_decision": "REVIEW", "confirmation_method": "password_reentry"},
+        event_metadata={"risk_decision": "REVIEW", "confirmation_method": "password_reentry"},
     ))
     db.commit()
     db.refresh(payment)
@@ -200,7 +200,7 @@ def approve_review(
             event_type="SPENDING_LIMIT_BLOCKED",
             actor=current_user.email,
             message="Payment approval denied because a configured spending limit would be exceeded.",
-            metadata={"violations": violations},
+            event_metadata={"violations": violations},
         ))
         db.commit()
         raise HTTPException(
@@ -285,3 +285,4 @@ def review_events(
         }
         for event in events
     ]
+
