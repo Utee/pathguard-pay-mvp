@@ -776,6 +776,7 @@ function App() {
               <div className="visual-connector" /><div className="visual-destination"><LockKeyhole /> Your decision comes first <ArrowRight /></div>
             </div>
             <small className="auth-sandbox"><ShieldCheck /> Built with PayPal Sandbox <span>No real money moves.</span></small>
+            <a className="auth-project-link" href="https://pathguard.cieltech.org/" target="_blank" rel="noopener noreferrer">Explore the PathGuard project <ArrowUpRight /></a>
           </section>
           <form className="auth-card" onSubmit={submitAuth}>
           <span className="auth-form-icon"><LockKeyhole /></span><div className="eyebrow">YOUR PAYMENT WORKSPACE</div>
@@ -1184,7 +1185,7 @@ function App() {
         </>}
       </main>
 
-      <footer><span><ShieldCheck /> PathGuard Pay</span><span>Intent. Clarity. Checkout.</span><span>Sandbox environment · No real money</span></footer>
+      <footer><span><ShieldCheck /> PathGuard Pay</span><a className="pathguard-project-link" href="https://pathguard.cieltech.org/" target="_blank" rel="noopener noreferrer">Explore PathGuard <ArrowUpRight /></a><span>Sandbox environment · No real money</span></footer>
     </>
   );
 }
