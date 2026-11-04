@@ -27,6 +27,8 @@ import {
   Users,
   Search,
   RefreshCw,
+  Copy,
+  ArrowLeft,
   Plus,
   ArrowUpRight,
   ArrowDownLeft,
@@ -90,6 +92,8 @@ function App() {
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState('');
   const [activeTab, setActiveTab] = useState('overview');
+  const [transactionId, setTransactionId] = useState(null);
+  function openTransaction(id) { setTransactionId(id); navigate('transaction'); }
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   function navigate(tab) { setActiveTab(tab); setMobileNavOpen(false); }
@@ -821,25 +825,25 @@ function App() {
             ['activity', History, 'Transactions'],
             ['reviews', ClipboardCheck, 'Payment reviews'],
             ['intelligence', Activity, 'Insights'],
-          ].map(([tab, Icon, label]) => <button key={tab} aria-current={activeTab === tab ? 'page' : undefined} className={activeTab === tab ? 'nav-active' : ''} onClick={() => navigate(tab)}><Icon /> {label}{tab === 'reviews' && ownReviews.filter(x => x.status === 'REVIEW_PENDING').length > 0 && <span className="nav-count">{ownReviews.filter(x => x.status === 'REVIEW_PENDING').length}</span>}</button>)}
+          ].map(([tab, Icon, label]) => <button key={tab} aria-current={activeTab === tab || (tab === 'activity' && activeTab === 'transaction') ? 'page' : undefined} className={activeTab === tab || (tab === 'activity' && activeTab === 'transaction') ? 'nav-active' : ''} onClick={() => navigate(tab)}><Icon /> {label}{tab === 'reviews' && ownReviews.filter(x => x.status === 'REVIEW_PENDING').length > 0 && <span className="nav-count">{ownReviews.filter(x => x.status === 'REVIEW_PENDING').length}</span>}</button>)}
           <span className="nav-section-label nav-section-spaced">YOUR ACCOUNT</span>
           {[
             ['security', ShieldCheck, 'Spending & limits'],
             ['wallet', Wallet, 'Payment methods'],
             ['notifications', Bell, 'Notifications'],
             ...(user.role === 'admin' ? [['admin', Users, 'Administration']] : []),
-          ].map(([tab, Icon, label]) => <button key={tab} aria-current={activeTab === tab ? 'page' : undefined} className={activeTab === tab ? 'nav-active' : ''} onClick={() => navigate(tab)}><Icon /> {label}</button>)}
+          ].map(([tab, Icon, label]) => <button key={tab} aria-current={activeTab === tab || (tab === 'activity' && activeTab === 'transaction') ? 'page' : undefined} className={activeTab === tab || (tab === 'activity' && activeTab === 'transaction') ? 'nav-active' : ''} onClick={() => navigate(tab)}><Icon /> {label}</button>)}
         </nav>
         <div className="sidebar-note"><ShieldCheck /><b>A moment of clarity.</b><p>Every payment starts with a check. You stay in control.</p><span><i /> PayPal Sandbox</span></div>
         <div className="account-controls"><span className="user-avatar">{(user.display_name || 'U').slice(0, 1).toUpperCase()}</span><span className="account-label"><b>{user.display_name}</b><small>{user.role === 'customer' ? 'Personal workspace' : user.role}</small></span><button className="signout" title="Sign out" aria-label="Sign out" onClick={signOut}><LogOut /></button></div>
       </header>
       <div className="workspace-topbar">
-        <div className="topbar-breadcrumb"><button className="mobile-menu icon-button" aria-label={mobileNavOpen ? 'Close navigation' : 'Open navigation'} aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen(!mobileNavOpen)}>{mobileNavOpen ? <X /> : <Menu />}</button><span>Workspace</span><ChevronRight /><b>{({overview:'Overview',payments:'New payment',activity:'Transactions',reviews:'Payment reviews',intelligence:'Insights',security:'Spending & limits',wallet:'Payment methods',notifications:'Notifications',admin:'Administration'})[activeTab]}</b></div>
+        <div className="topbar-breadcrumb"><button className="mobile-menu icon-button" aria-label={mobileNavOpen ? 'Close navigation' : 'Open navigation'} aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen(!mobileNavOpen)}>{mobileNavOpen ? <X /> : <Menu />}</button><span>Workspace</span><ChevronRight /><b>{({overview:'Overview',payments:'New payment',activity:'Transactions',transaction:'Transaction details',reviews:'Payment reviews',intelligence:'Insights',security:'Spending & limits',wallet:'Payment methods',notifications:'Notifications',admin:'Administration'})[activeTab]}</b></div>
         <div className="topbar-actions"><span className="environment-tag"><i /> Sandbox</span><button className="icon-button" aria-label="View notifications" onClick={() => navigate('notifications')}><Bell />{notifications.length > 0 && <i />}</button><span className="topbar-avatar">{(user.display_name || 'U').slice(0,1).toUpperCase()}</span></div>
       </div>
       <main id="workspace-main" className="workspace-main" data-view={activeTab}>
-        {activeTab === 'overview' && <Overview user={user} history={history} overview={intelligenceOverview} limits={limitSummary} reviews={ownReviews} navigate={navigate} openPayment={(id) => { restorePayment(id); navigate('payments'); }} />}
-        {activeTab === 'admin' && user.role === 'admin' ? <AdminDashboard /> : activeTab === 'reviews' ? <section className="tab-page">
+        {activeTab === 'overview' && <Overview user={user} history={history} overview={intelligenceOverview} limits={limitSummary} reviews={ownReviews} navigate={navigate} openPayment={openTransaction} />}
+        {activeTab === 'transaction' ? <TransactionDetails paymentId={transactionId} onBack={() => navigate('activity')} onContinue={(id) => { setPayment(null); restorePayment(id); navigate('payments'); }} /> : activeTab === 'admin' && user.role === 'admin' ? <AdminDashboard /> : activeTab === 'reviews' ? <section className="tab-page">
           <div className="page-heading"><div className="eyebrow">PAYMENT SAFETY</div><h1>Payment Reviews</h1><p>Review payments flagged by PathGuard before starting PayPal checkout. Your password is required to confirm a payment.</p></div>
           {ownReviewError && <div className="error"><ShieldAlert /><span>{ownReviewError}</span></div>}
           <div className="card info self-reviews-page"><h3><ClipboardCheck /> Your flagged payments <span className="queue-count">{ownReviews.filter((item) => item.status === 'REVIEW_PENDING').length}</span></h3>
@@ -864,7 +868,7 @@ function App() {
           </div>
         </section> : activeTab === 'activity' ? <section className="tab-page">
           <div className="page-heading"><div className="eyebrow">PAYMENTS</div><h1>Activity</h1><p>Review your recent payment requests and their status.</p></div>
-          <Transactions history={history} openPayment={(id) => { restorePayment(id); navigate('payments'); }} />
+          <Transactions history={history} openPayment={openTransaction} />
         </section> : activeTab === 'notifications' ? <section className="tab-page">
           <div className="page-heading"><div className="eyebrow">ACCOUNT UPDATES</div><h1>Notifications</h1><p>Recent payment and policy events from your account.</p></div>
           <div className="card info notifications-page"><h3><Bell /> Recent notifications <span className="queue-count">{notifications.length}</span></h3>
@@ -1237,6 +1241,76 @@ function Transactions({ history, openPayment }) {
   const [filter, setFilter] = useState('all');
   const filtered = history.filter(item => [item.recipient,item.purpose,item.status].filter(Boolean).join(' ').toLowerCase().includes(query.toLowerCase()) && (filter === 'all' || (filter === 'completed' ? item.status === 'COMPLETED' : filter === 'review' ? ['REVIEW_PENDING','REVIEW_APPROVED'].includes(item.status) : ['BLOCK','REVIEW_REJECTED'].includes(item.status))));
   return <div className="card transactions-card"><div className="transaction-toolbar"><div className="filter-tabs" aria-label="Filter transactions">{[['all','All activity'],['completed','Completed'],['review','In review'],['blocked','Stopped']].map(([value,label]) => <button key={value} aria-pressed={filter === value} className={filter === value ? 'selected' : ''} onClick={() => setFilter(value)}>{label}</button>)}</div><label className="search-field"><Search /><input aria-label="Search transactions" placeholder="Search transactions…" value={query} onChange={event => setQuery(event.target.value)} /></label></div><div className="transaction-labels"><span>RECIPIENT / PURPOSE</span><span>DATE</span><span>STATUS</span><span>AMOUNT</span></div>{filtered.length ? filtered.map(item => <PaymentRow key={item.id} item={item} onClick={() => openPayment(item.id)} />) : <EmptyState icon={query || filter !== 'all' ? Search : History} title={history.length ? 'No matching payments.' : 'No payments just yet.'} description={history.length ? 'Try a different search or activity filter.' : 'Your payment requests and their progress will appear here.'} />}<div className="table-footer">Showing {filtered.length} of {history.length} recent requests</div></div>;
+}
+
+function CopyReference({ label, value, emptyMessage }) {
+  const [copyState, setCopyState] = useState('idle');
+  useEffect(() => {
+    setCopyState('idle');
+  }, [value]);
+  useEffect(() => {
+    if (copyState !== 'copied') return;
+    const timer = window.setTimeout(() => setCopyState('idle'), 2500);
+    return () => window.clearTimeout(timer);
+  }, [copyState]);
+
+  async function copy() {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+      await navigator.clipboard.writeText(value);
+      setCopyState('copied');
+    } catch {
+      setCopyState('failed');
+    }
+  }
+
+  return <div className="reference-field">
+    <div className="reference-heading"><dt>{label}</dt>{value && <button className="copy-reference" type="button" aria-label={`Copy ${label}`} onClick={copy}>{copyState === 'copied' ? <CheckCircle2 /> : <Copy />}<span>{copyState === 'copied' ? 'Copied' : 'Copy'}</span></button>}</div>
+    <dd>{value ? <code tabIndex={0}>{value}</code> : <span className="reference-empty">{emptyMessage}</span>}</dd>
+    <span className="copy-feedback" role="status" aria-live="polite">{copyState === 'copied' ? `${label} copied.` : copyState === 'failed' ? 'Clipboard unavailable. Select the ID above and copy it manually.' : ''}</span>
+  </div>;
+}
+
+function TransactionDetails({ paymentId, onBack, onContinue }) {
+  const [detail, setDetail] = useState(null);
+  const [detailError, setDetailError] = useState('');
+  const [detailLoading, setDetailLoading] = useState(true);
+  const [revision, setRevision] = useState(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setDetail(null);
+    setDetailError('');
+    setDetailLoading(true);
+    async function fetchDetail() {
+      try {
+        const response = await apiFetch(`${API}/api/payments/${paymentId}`, { signal: controller.signal });
+        if (!response.ok) throw new Error(response.status === 404 ? 'This transaction could not be found on your account.' : response.status === 401 ? 'Your session has expired. Sign out and sign in again.' : 'Could not load this transaction. Please try again.');
+        const data = await response.json();
+        if (!controller.signal.aborted) setDetail(data);
+      } catch (err) {
+        if (!controller.signal.aborted) setDetailError(err.message || 'Could not load this transaction.');
+      } finally {
+        if (!controller.signal.aborted) setDetailLoading(false);
+      }
+    }
+    fetchDetail();
+    return () => controller.abort();
+  }, [paymentId, revision]);
+
+  const meta = statusMeta(detail?.status);
+  const paypal = detail?.paypal;
+  const canContinue = detail && !['COMPLETED', 'BLOCK', 'REVIEW_REJECTED', 'CANCELLED'].includes(detail.status);
+
+  return <section className="tab-page transaction-detail-page">
+    <button className="text-action details-back" onClick={onBack}><ArrowLeft /> Back to transactions</button>
+    <div className="page-heading detail-page-heading"><div><div className="eyebrow">PAYMENT RECORD</div><h1>Transaction details</h1><p>Payment information and PayPal references, in one place.</p></div><button className="secondary" onClick={() => setRevision(value => value + 1)} disabled={detailLoading}><RefreshCw className={detailLoading ? 'spin' : ''} /> Refresh</button></div>
+    {detailLoading ? <div className="card details-loading" role="status"><Loader2 className="spin" /> Loading transaction…</div> : detailError ? <div className="error" role="alert"><ShieldAlert /><span>{detailError}</span></div> : detail && <>
+      <div className="card transaction-summary-card"><div className="transaction-summary-top"><span className="transaction-detail-avatar">{(detail.recipient || '?').slice(0,1).toUpperCase()}</span><div><span className="mini-label">PAYMENT TO</span><h2>{detail.recipient}</h2><p>{detail.purpose || 'Payment request'}</p></div><span className={`status-pill ${meta.tone}`}>{meta.icon}{meta.label}</span></div><div className="transaction-detail-amount">{detail.currency} <strong>{money(detail.amount)}</strong></div><div className="transaction-record-meta"><span>PathGuard request <b>#{detail.id}</b></span><span>PayPal Sandbox</span></div></div>
+      <div className="card paypal-reference-card"><div className="section-heading"><div><h2>PayPal references</h2><p>Use these IDs to match this payment with PayPal or request support.</p></div><CreditCard /></div><dl className="reference-list"><CopyReference key={`order-${detail.id}`} label="Order ID" value={paypal?.order_id} emptyMessage="Not created — this request has not reached PayPal checkout." /><CopyReference key={`capture-${detail.id}`} label="Capture ID" value={paypal?.capture_id} emptyMessage={paypal?.order_id ? 'Not available yet — no successful capture has been recorded.' : 'Not available — no PayPal order has been created.'} /></dl>{paypal?.status && <div className="provider-status"><span>PayPal order status</span><b>{paypal.status.replaceAll('_', ' ')}</b></div>}<p className="reference-note"><LockKeyhole /> These references belong to this transaction. They are not your PayPal login or API credentials.</p></div>
+      {canContinue && <div className="transaction-next-step"><p>This request is not complete. Open its payment screen to see the next step.</p><button className="secondary" onClick={() => onContinue(detail.id)}>Open payment <ArrowRight /></button></div>}
+    </>}
+  </section>;
 }
 
 function RecipientProfile({ profile, currency }) {
