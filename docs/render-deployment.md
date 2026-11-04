@@ -13,10 +13,8 @@ Existing services in the workspace are not part of this Blueprint.
 3. Review the resource plans: API `0.5c-512mb`, database `0.1c-256mb`, static frontend.
 4. Supply the PayPal **Sandbox** client ID and secret and an OpenRouter API key
    through Render's secret fields. Never put them in GitHub or the frontend.
-5. For `CORS_ALLOWED_ORIGINS` and `PAYPAL_FRONTEND_URL`, enter the exact frontend
-   HTTPS origin shown by Render. If the URL is not assigned until creation, use
-   `https://example.invalid` temporarily, then update both variables once the
-   actual URL is known and redeploy the API. The app cannot be used until corrected.
+5. The Blueprint automatically sets `CORS_ALLOWED_ORIGINS` and `PAYPAL_FRONTEND_URL`
+   from the frontend's assigned Render URL. No temporary frontend URL is needed.
 
 Render generates the JWT signing key and a 256-bit URL-safe base64 key suitable
 for Fernet. Keep both stable. Changing the wallet encryption key prevents old
